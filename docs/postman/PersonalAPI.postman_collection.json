@@ -192,6 +192,12 @@
       "key": "chatMessage",
       "value": "Summarize my latest updates",
       "type": "string"
+    },
+    {
+      "key": "mcpItemId",
+      "value": "",
+      "type": "string",
+      "description": "Item UUID for MCP /tools/item/{item_id} — copy an id from MCP Search results"
     }
   ],
   "item": [
@@ -1458,6 +1464,420 @@
             },
             "description": "Shortcut: triggers Google Calendar sync."
           }
+        },
+        {
+          "name": "WhatsApp - Bootstrap Connector",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"access_token\": \"your-whatsapp-api-token\",\n  \"metadata_json\": {\n    \"messages_endpoint\": \"https://your-whatsapp-server.example.com/api/messages\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/whatsapp/bootstrap",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "whatsapp", "bootstrap"]
+            },
+            "description": "WhatsApp does not use OAuth. Bootstrap the connector by providing your custom WhatsApp API endpoint and access token. After this, trigger sync with POST /connectors/whatsapp/sync."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201 or 200', function () { pm.expect([200, 201]).to.include(pm.response.code); });",
+                  "var body = pm.response.json();",
+                  "pm.test('WhatsApp connector created', function () {",
+                  "  pm.expect(body.platform).to.eql('whatsapp');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "WhatsApp - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/whatsapp/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "whatsapp", "sync"]
+            },
+            "description": "Queues a WhatsApp sync job. Requires the connector to be bootstrapped first."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 202', function () { pm.response.to.have.status(202); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Sync queue response is valid', function () {",
+                  "  pm.expect(body.status).to.eql('sync_queued');",
+                  "  pm.expect(body.platform).to.eql('whatsapp');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MCP",
+      "item": [
+        {
+          "name": "MCP Health",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "health"]
+            },
+            "description": "Liveness check for the MCP sub-application mounted at /mcp."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('MCP health payload is valid', function () {",
+                  "  pm.expect(body.status).to.eql('ok');",
+                  "  pm.expect(body.service).to.eql('mcp');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP List Tools",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools/list",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "tools", "list"]
+            },
+            "description": "Returns metadata for all available MCP tools — useful for MCP client auto-discovery."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Tools list returned', function () {",
+                  "  pm.expect(body).to.have.property('tools');",
+                  "  pm.expect(body.tools).to.be.an('array').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP Search",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"{{searchQuery}}\",\n  \"top_k\": 10,\n  \"type_filter\": null,\n  \"source_filter\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools/search",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "tools", "search"]
+            },
+            "description": "Full-text search across all synced personal data using a developer API key. Supports optional type_filter (email|document|track|message|event) and source_filter (gmail|drive|notion|slack|spotify|gcal)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Search response contract is valid', function () {",
+                  "  pm.expect(body).to.have.property('query');",
+                  "  pm.expect(body).to.have.property('results');",
+                  "  pm.expect(body).to.have.property('count');",
+                  "});",
+                  "if (body.results && body.results.length > 0) {",
+                  "  pm.collectionVariables.set('mcpItemId', body.results[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP Ask",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"{{chatMessage}}\",\n  \"session_id\": null,\n  \"top_k\": 8\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools/ask",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "tools", "ask"]
+            },
+            "description": "Ask a natural language question and receive a grounded RAG answer with source citations. If RAG_LLM_ENABLED=true uses local Ollama/qwen2.5; otherwise returns deterministic context assembly."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Ask response has answer', function () {",
+                  "  pm.expect(body).to.have.property('answer');",
+                  "  pm.expect(body).to.have.property('sources');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP Get Item",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools/item/{{mcpItemId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "tools", "item", "{{mcpItemId}}"]
+            },
+            "description": "Retrieve full content and metadata for a single item by UUID. Set mcpItemId from MCP Search results (auto-captured in test script)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}",
+                  "if (!pm.collectionVariables.get('mcpItemId')) {",
+                  "  throw new Error('mcpItemId is empty. Run MCP Search first to capture an item id.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Item detail payload is valid', function () {",
+                  "  pm.expect(body).to.have.property('id');",
+                  "  pm.expect(body).to.have.property('type');",
+                  "  pm.expect(body).to.have.property('source');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP List Connectors",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools/connectors",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "tools", "connectors"]
+            },
+            "description": "List all connected platforms and their sync status — useful for agents to determine which data sources are available before searching."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Response is array', function () { pm.expect(body).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP Get Profile",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/mcp/tools/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "tools", "profile"]
+            },
+            "description": "Return user profile and summary of synced data counts (connector_count, item_count). Use for agent self-orientation."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Profile payload is valid', function () {",
+                  "  pm.expect(body).to.have.property('id');",
+                  "  pm.expect(body).to.have.property('email');",
+                  "  pm.expect(body).to.have.property('item_count');",
+                  "  pm.expect(body).to.have.property('connector_count');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }
