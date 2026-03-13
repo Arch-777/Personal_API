@@ -54,10 +54,7 @@ export function HeroSection() {
               <Link href="/?auth=signup">
                 <Button
                   size="lg"
-                  className="bg-[oklch(0.62_0.22_275)] hover:bg-[oklch(0.55_0.18_290)] text-white font-semibold px-8 cursor-pointer"
-                  style={{
-                    boxShadow: "0 0 30px oklch(0.62 0.22 275 / 0.35)",
-                  }}
+                  className="bg-foreground text-background hover:bg-foreground/90 font-semibold px-8 cursor-pointer shadow-lg shadow-foreground/10"
                 >
                   Get Started Free
                 </Button>

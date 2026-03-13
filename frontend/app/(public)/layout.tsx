@@ -87,7 +87,7 @@ export default function PublicLayout({
             </Link>
             <Link href="/?auth=signup">
               <Button
-                className="bg-[oklch(0.62_0.22_275)] hover:bg-[oklch(0.55_0.18_290)] text-white cursor-pointer"
+                className="bg-foreground text-background hover:bg-foreground/90 cursor-pointer"
               >
                 Get Started
               </Button>
@@ -136,7 +136,7 @@ export default function PublicLayout({
                     href="/?auth=signup"
                     onClick={() => setMobileOpen(false)}
                   >
-                    <Button className="w-full bg-[oklch(0.62_0.22_275)] hover:bg-[oklch(0.55_0.18_290)] text-white cursor-pointer">
+                    <Button className="w-full bg-foreground text-background hover:bg-foreground/90 cursor-pointer">
                       Get Started
                     </Button>
                   </Link>
