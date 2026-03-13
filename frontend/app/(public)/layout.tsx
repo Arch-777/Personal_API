@@ -5,6 +5,7 @@ import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Footer } from "@/components/landing/footer";
 
 export default function PublicLayout({
   children,
@@ -52,7 +53,7 @@ export default function PublicLayout({
       <header className="fixed top-0 left-0 right-0 z-50 flex justify-center items-start pt-4 px-4 pointer-events-none">
         {/* The pill — always visible, intensifies on scroll */}
         <nav
-          className="pointer-events-auto w-full max-w-[820px] flex items-center justify-between px-5 py-3 transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]"
+          className="pointer-events-auto w-full max-w-205 flex items-center justify-between px-5 py-3 transition-all duration-700 ease-in-out"
           style={{
             borderRadius: "9999px",
             background: !(mounted && isDark)
@@ -177,9 +178,7 @@ export default function PublicLayout({
       {/* pt-24 accounts for pill height (60px) + top offset (16px) + breathing room */}
       <main className="flex-1 pt-24">{children}</main>
 
-      <footer className="py-6 text-center border-t border-black/5 dark:border-white/5 text-sm text-muted-foreground">
-        © 2026 PersonalAPI. All rights reserved.
-      </footer>
+      <Footer />
     </div>
   );
 }

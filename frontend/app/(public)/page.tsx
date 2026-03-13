@@ -5,7 +5,6 @@ import { useSearchParams } from "next/navigation";
 import { HeroSection } from "@/components/landing/hero-section";
 import { FeaturesSection } from "@/components/landing/features-section";
 import { PricingSection } from "@/components/landing/pricing-section";
-import { Footer } from "@/components/landing/footer";
 import { AuthModal } from "@/components/landing/auth-modal";
 import { Separator } from "@/components/ui/separator";
 
@@ -22,7 +21,6 @@ function LandingPageContent() {
       <FeaturesSection />
       <Separator className="opacity-10" />
       <PricingSection />
-      <Footer />
 
       {/* Auth modals */}
       <AuthModal
