@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.core.auth import get_current_user
@@ -192,7 +193,15 @@ def test_developer_revoke_api_key_success():
 
 
 
-def test_connector_sync_queues_expected_worker_task():
+@pytest.mark.parametrize(
+	"platform,task_name",
+	[
+		("gmail", "workers.google_worker.sync_gmail"),
+		("drive", "workers.google_worker.sync_drive"),
+		("gcal", "workers.google_worker.sync_gcal"),
+	],
+)
+def test_connector_sync_queues_expected_worker_task(platform: str, task_name: str):
 	from unittest.mock import patch
 	from api.routers import connectors as connectors_router
 
@@ -217,7 +226,7 @@ def test_connector_sync_queues_expected_worker_task():
 	connector = SimpleNamespace(
 		id=uuid.uuid4(),
 		user_id=uuid.uuid4(),
-		platform="gmail",
+		platform=platform,
 		sync_cursor="0",
 		status="connected",
 		error_message=None,
@@ -235,17 +244,17 @@ def test_connector_sync_queues_expected_worker_task():
 	):
 		with patch.object(connectors_router.celery_app, "send_task", return_value=SimpleNamespace(id="task-1")) as send_task:
 			client = TestClient(app)
-			response = client.post("/v1/connectors/gmail/sync")
+			response = client.post(f"/v1/connectors/{platform}/sync")
 
 			assert response.status_code == 202
-			assert response.json() == {"status": "sync_queued", "platform": "gmail"}
+			assert response.json() == {"status": "sync_queued", "platform": platform}
 			assert fake_db.committed is True
 			assert connector.status == "syncing"
 
 			send_task.assert_called_once()
 			called_task_name = send_task.call_args.args[0]
 			called_args = send_task.call_args.kwargs["args"]
-			assert called_task_name == "workers.google_worker.sync_gmail"
+			assert called_task_name == task_name
 			assert called_args[0] == str(connector.id)
 			assert called_args[1] == str(current_user.id)
 			assert called_args[2] == "0"

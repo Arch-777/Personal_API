@@ -2,6 +2,8 @@ import json
 import uuid
 from types import SimpleNamespace
 
+import httpx
+
 from normalizer.base import NormalizedItem
 from normalizer.drive import DriveNormalizer
 from normalizer.gcal import GCalNormalizer
@@ -196,6 +198,81 @@ def test_fetch_slack_records_collects_messages_and_advances_cursor(monkeypatch):
 	assert rows[0]["_channel"]["id"] == "C123"
 	assert rows[0]["_user_profile"]["email"] == "nisha@example.com"
 	assert json.loads(next_cursor)["latest_ts"] == "1710000000.123"
+
+
+def test_fetch_gmail_records_does_not_send_invalid_zero_page_token(monkeypatch):
+	seen_params = {}
+
+	def fake_get(url, access_token, params=None, headers=None):
+		if "messages/" in url:
+			return {"id": "msg-1", "snippet": "Hello", "payload": {"headers": []}}
+		seen_params.update(params or {})
+		return {"messages": [{"id": "msg-1"}]}
+
+	monkeypatch.setattr(connector_sync, "_http_get_json", fake_get)
+
+	rows, next_cursor = connector_sync._fetch_gmail_records(access_token="token", source_cursor="0")
+
+	assert len(rows) == 1
+	assert "pageToken" not in seen_params
+	assert next_cursor == ""
+
+
+def test_fetch_drive_records_uses_incremental_state_cursor(monkeypatch):
+	calls = []
+
+	def fake_get(url, access_token, params=None, headers=None):
+		calls.append(params or {})
+		return {
+			"files": [
+				{
+					"id": "file-1",
+					"name": "Roadmap",
+					"modifiedTime": "2026-03-14T10:00:00Z",
+				}
+			]
+		}
+
+	monkeypatch.setattr(connector_sync, "_http_get_json", fake_get)
+
+	rows, next_cursor = connector_sync._fetch_drive_records(access_token="token", source_cursor="0")
+
+	assert len(rows) == 1
+	assert calls
+	assert "pageToken" not in calls[0]
+	assert "trashed = false" in calls[0]["q"]
+	state = json.loads(next_cursor)
+	assert state["updated_after"] == "2026-03-14T10:00:00Z"
+
+
+def test_fetch_gcal_records_recovers_when_sync_token_is_expired(monkeypatch):
+	calls = []
+
+	def fake_get(url, access_token, params=None, headers=None):
+		calls.append(params or {})
+		if "syncToken" in (params or {}):
+			req = httpx.Request("GET", url)
+			resp = httpx.Response(410, request=req)
+			raise httpx.HTTPStatusError("stale sync token", request=req, response=resp)
+		return {
+			"items": [{"id": "event-1", "updated": "2026-03-14T11:00:00Z"}],
+			"nextSyncToken": "sync-next-1",
+		}
+
+	monkeypatch.setattr(connector_sync, "_http_get_json", fake_get)
+
+	rows, next_cursor = connector_sync._fetch_gcal_records(
+		access_token="token",
+		source_cursor=json.dumps({"sync_token": "stale-token", "updated_after": "2026-03-14T09:00:00Z"}),
+	)
+
+	assert len(rows) == 1
+	assert len(calls) == 2
+	assert calls[0]["syncToken"] == "stale-token"
+	assert calls[1]["updatedMin"] == "2026-03-14T09:00:00Z"
+	state = json.loads(next_cursor)
+	assert state["sync_token"] == "sync-next-1"
+	assert state["updated_after"] == "2026-03-14T11:00:00Z"
 
 
 def test_fetch_platform_records_uses_seeded_metadata_records_without_http():

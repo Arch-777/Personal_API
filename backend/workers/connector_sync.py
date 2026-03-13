@@ -251,6 +251,48 @@ def _parse_cursor(raw_cursor: str | None) -> int:
     return max(parsed, 0)
 
 
+def _has_cursor_value(raw_cursor: str | None) -> bool:
+    if raw_cursor is None:
+        return False
+    normalized = raw_cursor.strip()
+    return normalized not in {"", "0"}
+
+
+def _parse_state_cursor(raw_cursor: str | None) -> dict[str, str]:
+    if not _has_cursor_value(raw_cursor):
+        return {}
+
+    normalized = raw_cursor.strip()
+    try:
+        parsed = json.loads(normalized)
+    except json.JSONDecodeError:
+        return {"page_token": normalized}
+
+    if not isinstance(parsed, dict):
+        return {}
+
+    state: dict[str, str] = {}
+    for key in ["page_token", "updated_after", "sync_token"]:
+        value = parsed.get(key)
+        if isinstance(value, str) and value.strip():
+            state[key] = value.strip()
+    return state
+
+
+def _encode_state_cursor(state: dict[str, str]) -> str:
+    compact_state = {k: v for k, v in state.items() if isinstance(v, str) and v.strip()}
+    if not compact_state:
+        return ""
+    return json.dumps(compact_state, sort_keys=True)
+
+
+def _max_datetime_value(rows: list[dict[str, Any]], key: str) -> str:
+    values = [str(row.get(key)).strip() for row in rows if isinstance(row.get(key), str) and str(row.get(key)).strip()]
+    if not values:
+        return ""
+    return max(values)
+
+
 def _fetch_platform_records(
     platform: str,
     connector: Connector,
@@ -282,7 +324,7 @@ def _fetch_platform_records(
 
 def _fetch_gmail_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
     params: dict[str, Any] = {"maxResults": 25}
-    if source_cursor:
+    if _has_cursor_value(source_cursor):
         params["pageToken"] = source_cursor
 
     payload = _http_get_json(
@@ -306,46 +348,116 @@ def _fetch_gmail_records(access_token: str, source_cursor: str | None) -> tuple[
         if isinstance(detail, dict):
             rows.append(detail)
 
-    next_cursor = _extract_next_cursor(payload, source_cursor)
+    next_cursor = str(payload.get("nextPageToken") or "")
     return rows, next_cursor
 
 
 def _fetch_drive_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
+    cursor_state = _parse_state_cursor(source_cursor)
+    page_token = cursor_state.get("page_token")
+    updated_after = cursor_state.get("updated_after")
+
     params: dict[str, Any] = {
-        "pageSize": 25,
+        "pageSize": 100,
         "fields": "nextPageToken,files(id,name,mimeType,description,modifiedTime,createdTime,owners(displayName,emailAddress),webViewLink)",
-        "orderBy": "modifiedTime desc",
+        "orderBy": "modifiedTime asc",
+        "supportsAllDrives": "true",
+        "includeItemsFromAllDrives": "true",
+        "q": "trashed = false",
     }
-    if source_cursor:
-        params["pageToken"] = source_cursor
+    if updated_after and not page_token:
+        params["q"] = f"trashed = false and modifiedTime > '{updated_after}'"
+    if page_token:
+        params["pageToken"] = page_token
 
     payload = _http_get_json(
         url="https://www.googleapis.com/drive/v3/files",
         access_token=access_token,
         params=params,
     )
-    rows = payload.get("files") if isinstance(payload.get("files"), list) else []
-    next_cursor = _extract_next_cursor(payload, source_cursor)
-    return [row for row in rows if isinstance(row, dict)], next_cursor
+    rows = [row for row in (payload.get("files") if isinstance(payload.get("files"), list) else []) if isinstance(row, dict)]
+
+    next_page_token = payload.get("nextPageToken")
+    max_modified_time = _max_datetime_value(rows, "modifiedTime")
+    if next_page_token:
+        next_cursor = _encode_state_cursor(
+            {
+                "page_token": str(next_page_token),
+                "updated_after": updated_after or max_modified_time,
+            }
+        )
+    else:
+        next_cursor = _encode_state_cursor({"updated_after": max_modified_time or updated_after or ""})
+
+    return rows, next_cursor
 
 
 def _fetch_gcal_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
-    params: dict[str, Any] = {
-        "maxResults": 25,
-        "singleEvents": True,
-        "orderBy": "updated",
-    }
-    if source_cursor:
-        params["pageToken"] = source_cursor
+    cursor_state = _parse_state_cursor(source_cursor)
+    page_token = cursor_state.get("page_token")
+    sync_token = cursor_state.get("sync_token")
+    updated_after = cursor_state.get("updated_after")
 
-    payload = _http_get_json(
-        url="https://www.googleapis.com/calendar/v3/calendars/primary/events",
-        access_token=access_token,
-        params=params,
-    )
-    rows = payload.get("items") if isinstance(payload.get("items"), list) else []
-    next_cursor = _extract_next_cursor(payload, source_cursor)
-    return [row for row in rows if isinstance(row, dict)], next_cursor
+    params: dict[str, Any]
+    if sync_token and not page_token:
+        params = {
+            "maxResults": 250,
+            "singleEvents": True,
+            "syncToken": sync_token,
+        }
+    else:
+        params = {
+            "maxResults": 250,
+            "singleEvents": True,
+            "orderBy": "updated",
+        }
+        if updated_after and not page_token:
+            params["updatedMin"] = updated_after
+
+    if page_token:
+        params["pageToken"] = page_token
+
+    url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+    try:
+        payload = _http_get_json(url=url, access_token=access_token, params=params)
+    except httpx.HTTPStatusError as exc:
+        # Google invalidates sync tokens; fall back to updatedMin-based incremental pull.
+        if params.get("syncToken") and exc.response is not None and exc.response.status_code == 410:
+            fallback_params: dict[str, Any] = {
+                "maxResults": 250,
+                "singleEvents": True,
+                "orderBy": "updated",
+            }
+            if updated_after:
+                fallback_params["updatedMin"] = updated_after
+            payload = _http_get_json(url=url, access_token=access_token, params=fallback_params)
+            params = fallback_params
+            sync_token = ""
+        else:
+            raise
+
+    rows = [row for row in (payload.get("items") if isinstance(payload.get("items"), list) else []) if isinstance(row, dict)]
+    next_page_token = payload.get("nextPageToken")
+    next_sync_token = payload.get("nextSyncToken")
+    max_updated = _max_datetime_value(rows, "updated")
+
+    if next_page_token:
+        next_cursor = _encode_state_cursor(
+            {
+                "page_token": str(next_page_token),
+                "sync_token": sync_token,
+                "updated_after": updated_after,
+            }
+        )
+    else:
+        next_cursor = _encode_state_cursor(
+            {
+                "sync_token": str(next_sync_token) if isinstance(next_sync_token, str) else sync_token,
+                "updated_after": max_updated or updated_after or "",
+            }
+        )
+
+    return rows, next_cursor
 
 
 def _fetch_notion_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:

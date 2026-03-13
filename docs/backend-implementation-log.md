@@ -833,3 +833,30 @@ Track backend implementation progress step-by-step, with what changed, status, a
     - Command: python -m json.tool docs/postman/PersonalAPI.postman_collection.json
 - Next:
   - Redeploy backend with current RAG debug changes and run the two new Postman requests against the hosted environment.
+
+## Step 37 - Production-Grade Google Drive and GCal Sync Cursors
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Added robust cursor helpers for connector state (`_has_cursor_value`, `_parse_state_cursor`, `_encode_state_cursor`, `_max_datetime_value`).
+    - Fixed Google cursor handling so sentinel cursor values (`"0"`/empty) are never sent as upstream page tokens.
+    - Upgraded Gmail fetch pagination behavior to return empty cursor when no `nextPageToken` exists.
+    - Reworked Drive sync to production-style incremental behavior:
+      - Uses state cursor JSON (`page_token`, `updated_after`).
+      - Uses ascending `modifiedTime` with `trashed=false` filters.
+      - Enables shared drive coverage (`supportsAllDrives`, `includeItemsFromAllDrives`).
+      - Persists high-watermark (`updated_after`) when page traversal finishes.
+    - Reworked GCal sync to production-style incremental behavior:
+      - Uses state cursor JSON (`page_token`, `sync_token`, `updated_after`).
+      - Uses `nextSyncToken` for delta sync and preserves continuation with `pageToken`.
+      - Handles stale Google sync tokens (`HTTP 410`) by automatically falling back to `updatedMin` incremental fetch.
+  - backend/tests/test_normalizers.py:
+    - Added regression test to ensure Gmail does not send invalid `pageToken=0`.
+    - Added regression test for Drive incremental state cursor generation.
+    - Added regression test for GCal stale sync-token recovery path.
+- Verification:
+  - Targeted connector and normalizer suites passed: `25 passed in 1.70s`.
+  - Command (from `backend/`): `py -3 -m pytest tests/test_api.py tests/test_normalizers.py -q`
+- Next:
+  - Run live connector smoke tests for Google Drive and GCal against real OAuth tokens and verify repeated sync runs produce no duplicate pulls beyond idempotent upsert updates.
