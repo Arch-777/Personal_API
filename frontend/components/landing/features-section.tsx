@@ -67,7 +67,7 @@ const features = [
     stat: { value: "0", label: "data sent to third parties" },
     accentColor: "34,197,94", // green
     preview: [
-      { label: "AES-256 encryption", done: true },
+      { label: "SHA-256 encryption", done: true },
       { label: "OAuth 2.0 auth", done: true },
       { label: "Local LLM support", done: true },
       { label: "Audit logs", done: true },
@@ -130,7 +130,7 @@ export function FeaturesSection() {
                     {feature.title}
                   </h3>
                 </div>
-                
+
                 <p className="text-sm font-medium dark:text-gray-300 text-gray-700 mb-3">
                   {feature.tagline}
                 </p>
@@ -181,11 +181,10 @@ export function FeaturesSection() {
                     {(feature.preview as { role: string; text: string }[]).map((msg, mi) => (
                       <div
                         key={mi}
-                        className={`text-[12px] leading-relaxed rounded-xl px-4 py-3 max-w-[90%] ${
-                          msg.role === "user"
+                        className={`text-[12px] leading-relaxed rounded-xl px-4 py-3 max-w-[90%] ${msg.role === "user"
                             ? "self-end dark:bg-[#1e1e1e] bg-gray-100 dark:text-gray-200 text-gray-800 border dark:border-[#2a2a2a] border-gray-200"
                             : "self-start dark:bg-[#141414] bg-gray-50 dark:text-gray-400 text-gray-600 border dark:border-[#222] border-gray-200"
-                        }`}
+                          }`}
                       >
                         {msg.text}
                       </div>
@@ -223,7 +222,7 @@ export function FeaturesSection() {
 
               {/* ── FOOTER STAT ── */}
               <div className="pb-6 pt-5 mt-auto flex items-baseline justify-between gap-2 border-t dark:border-[#222] border-gray-200 mx-6">
-                 <span className="text-[11px] uppercase tracking-widest dark:text-gray-500 text-gray-400 font-bold whitespace-nowrap">
+                <span className="text-[11px] uppercase tracking-widest dark:text-gray-500 text-gray-400 font-bold whitespace-nowrap">
                   {feature.stat.label}
                 </span>
                 <span className="text-2xl font-light tracking-tight dark:text-white text-gray-900">

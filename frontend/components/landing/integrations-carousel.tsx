@@ -5,9 +5,8 @@ import { useScrollReveal } from '@/hooks/use-scroll-reveal'
 
 // Plain names — NO emoji prefix, NO ✦
 const tickerItems = [
-  'NOTION', 'SLACK', 'GMAIL', 'GOOGLE DRIVE', 'GITHUB',
-  'TELEGRAM', 'DISCORD', 'SPOTIFY', 'GOOGLE DOCS',
-  'GOOGLE CALENDAR', 'GOOGLE SHEETS', 'LINEAR',
+  'NOTION', 'SLACK', 'GMAIL',
+  'SPOTIFY', 'GOOGLE DRIVE', 'GOOGLE CALENDAR'
 ]
 
 export function IntegrationsCarousel() {
