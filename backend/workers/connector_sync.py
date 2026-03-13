@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from api.core.config import get_settings
@@ -815,6 +815,20 @@ def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:
         return []
 
     stmt = insert(Item).values(rows)
+    metadata_without_runtime = _metadata_without_runtime_fields
+    change_predicates = [
+        Item.type.is_distinct_from(stmt.excluded.type),
+        Item.title.is_distinct_from(stmt.excluded.title),
+        Item.sender_name.is_distinct_from(stmt.excluded.sender_name),
+        Item.sender_email.is_distinct_from(stmt.excluded.sender_email),
+        Item.content.is_distinct_from(stmt.excluded.content),
+        Item.summary.is_distinct_from(stmt.excluded.summary),
+        Item.item_date.is_distinct_from(stmt.excluded.item_date),
+        Item.file_path.is_distinct_from(stmt.excluded.file_path),
+        metadata_without_runtime(Item.metadata_json).is_distinct_from(
+            metadata_without_runtime(stmt.excluded.metadata)
+        ),
+    ]
     upsert_stmt = stmt.on_conflict_do_update(
         index_elements=[Item.user_id, Item.source, Item.source_id],
         set_={
@@ -829,10 +843,16 @@ def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:
             "file_path": stmt.excluded.file_path,
             "updated_at": datetime.now(UTC),
         },
+        where=or_(*change_predicates),
     ).returning(Item.id)
 
     result = db.execute(upsert_stmt)
     return list(result.scalars().all())
+
+
+def _metadata_without_runtime_fields(expr):
+    """Ignore ingestion/runtime keys that should not trigger re-embedding."""
+    return expr.op("-")("cursor").op("-")("embedding_status").op("-")("embedded_at").op("-")("chunk_count")
 
 
 def _mark_sync_started(connector_id: uuid.UUID, user_id: uuid.UUID) -> None:

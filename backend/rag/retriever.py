@@ -41,6 +41,7 @@ STOPWORDS = {
 
 EMAIL_HINT_TOKENS = {"mail", "email", "gmail", "inbox", "message", "messages"}
 LINKEDIN_HINT_TOKENS = {"linkedin", "linkedin.com"}
+DOCUMENT_HINT_TOKENS = {"document", "documents", "doc", "docs", "note", "notes", "page", "pages", "file", "files"}
 
 
 @dataclass(slots=True)
@@ -73,6 +74,8 @@ class QueryIntent:
 	prefers_spotify: bool = False
 	prefers_email: bool = False
 	prefers_documents: bool = False
+	prefers_notion: bool = False
+	prefers_drive: bool = False
 	mentions_linkedin: bool = False
 	wants_favorites: bool = False
 	wants_tracks: bool = False
@@ -119,6 +122,11 @@ class HybridRetriever:
 			candidate_limit=candidate_limit,
 			intent=intent,
 		)
+		if chunk_candidates:
+			deduped = _dedupe_and_group(chunk_candidates)
+			reranked = _rerank_grouped_results(deduped, intent=intent)
+			reranked.sort(key=lambda item: (item.score, item.item_date or datetime.min), reverse=True)
+			return reranked[:top_k]
 
 		stmt = select(Item).where(Item.user_id == user_id)
 		if type_filter:
@@ -378,6 +386,24 @@ def _intent_bonus(row: Item, query_tokens: set[str], combined_text: str, intent:
 		else:
 			bonus -= 0.2
 
+	if intent.prefers_documents:
+		if row_source in {"drive", "notion"} or row_type in {"document", "note", "page", "file"}:
+			bonus += 0.45
+		else:
+			bonus -= 0.2
+
+	if intent.prefers_notion:
+		if row_source == "notion":
+			bonus += 0.55
+		else:
+			bonus -= 0.35
+
+	if intent.prefers_drive:
+		if row_source == "drive":
+			bonus += 0.45
+		else:
+			bonus -= 0.2
+
 	if intent.wants_favorites and row_source == "spotify":
 		bonus += _favorite_metadata_score(metadata)
 
@@ -435,6 +461,8 @@ def _remove_stopwords(tokens: set[str]) -> set[str]:
 
 
 def _normalize_token(token: str) -> str:
+	if token in {"doc", "docs"}:
+		return "document"
 	if token in {"mails", "emails", "gmails"}:
 		return token[:-1]
 	if token in {"messages", "documents", "tracks", "songs", "favourites", "favorites"}:
@@ -449,7 +477,9 @@ def _infer_intent(normalized_query: str, query_tokens: set[str]) -> QueryIntent:
 	return QueryIntent(
 		prefers_spotify="spotify" in query_tokens,
 		prefers_email=bool(query_tokens & EMAIL_HINT_TOKENS),
-		prefers_documents=bool(query_tokens & {"document", "documents", "note", "notes", "page", "pages"}),
+		prefers_documents=bool(query_tokens & DOCUMENT_HINT_TOKENS),
+		prefers_notion="notion" in query_tokens,
+		prefers_drive=bool(query_tokens & {"drive", "gdrive"}),
 		mentions_linkedin=bool(query_tokens & LINKEDIN_HINT_TOKENS),
 		wants_favorites=bool(query_tokens & {"favorite", "favourite", "favorites", "favourites", "best", "top"}),
 		wants_tracks=bool(query_tokens & {"song", "songs", "track", "tracks", "music"}),
@@ -470,6 +500,10 @@ def _extract_requested_count(normalized_query: str) -> int | None:
 
 
 def _build_source_constraint(intent: QueryIntent):
+	if intent.prefers_notion and not intent.prefers_email and not intent.prefers_spotify:
+		return Item.source == "notion"
+	if intent.prefers_drive and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_notion:
+		return Item.source == "drive"
 	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents:
 		return or_(Item.source == "gmail", Item.type == "email")
 	if intent.prefers_spotify and not intent.prefers_email and not intent.prefers_documents:
@@ -482,6 +516,10 @@ def _build_source_constraint(intent: QueryIntent):
 def _matches_intent_source(*, row_source: str | None, row_type: str | None, intent: QueryIntent) -> bool:
 	source = (row_source or "").lower()
 	type_name = (row_type or "").lower()
+	if intent.prefers_notion and not intent.prefers_email and not intent.prefers_spotify:
+		return source == "notion"
+	if intent.prefers_drive and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_notion:
+		return source == "drive"
 	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents:
 		return source == "gmail" or type_name == "email"
 	if intent.prefers_spotify and not intent.prefers_email and not intent.prefers_documents:
@@ -509,6 +547,12 @@ def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent) -
 			adjustment += 0.4 if result.source == "spotify" else -0.2
 		if intent.prefers_email:
 			adjustment += 0.4 if result.source == "gmail" or result.type == "email" else -0.1
+		if intent.prefers_documents:
+			adjustment += 0.45 if result.source in {"drive", "notion"} or result.type in {"document", "note", "page", "file"} else -0.2
+		if intent.prefers_notion:
+			adjustment += 0.7 if result.source == "notion" else -0.45
+		if intent.prefers_drive:
+			adjustment += 0.45 if result.source == "drive" else -0.2
 		if intent.wants_favorites and result.source == "spotify":
 			adjustment += _favorite_metadata_score(metadata)
 		if intent.mentions_linkedin:

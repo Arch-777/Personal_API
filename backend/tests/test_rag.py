@@ -38,6 +38,25 @@ class FakeRetrieverDb:
 		return _FakeResult(self.rows)
 
 
+class _FakeChunkResult:
+	def __init__(self, rows):
+		self._rows = rows
+
+	def all(self):
+		return self._rows
+
+
+class FakeChunkFirstRetrieverDb:
+	def __init__(self, chunk_rows, item_rows):
+		self.chunk_rows = chunk_rows
+		self.item_rows = item_rows
+
+	def execute(self, stmt):
+		if "item_chunks" in str(stmt):
+			return _FakeChunkResult(self.chunk_rows)
+		return _FakeResult(self.item_rows)
+
+
 def test_chunk_text_builds_overlapping_windows():
 	text = " ".join([f"token{i}" for i in range(0, 120)])
 	chunks = chunk_text(text=text, max_tokens=40, overlap_tokens=10, chunk_id_prefix="doc")
@@ -267,6 +286,133 @@ def test_hybrid_retriever_routes_last_mail_query_to_recent_gmail_only():
 	assert len(results) == 2
 	assert all(result.source == "gmail" for result in results)
 	assert all(result.type == "email" for result in results)
+
+
+def test_hybrid_retriever_understands_docs_token_and_excludes_spotify_noise():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="track",
+			source="spotify",
+			title="Random song",
+			summary="music",
+			content="audio",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Privacy policy",
+			summary="Risk summary table",
+			content="sell or share user data with third parties",
+			metadata_json={},
+			item_date=now,
+			file_path="/users/u/data/notion/policy.json",
+			embedding=None,
+			created_at=now,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="show docs", top_k=5)
+
+	assert len(results) >= 1
+	assert all(result.source in {"notion", "drive"} for result in results)
+	assert all(result.type in {"document", "note", "page", "file"} or result.source in {"notion", "drive"} for result in results)
+
+
+def test_hybrid_retriever_prioritizes_notion_when_query_mentions_notion_docs():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Risk Register",
+			summary="Risk summary table",
+			content="Mitigation and controls",
+			metadata_json={},
+			item_date=now,
+			file_path="/users/u/data/notion/risk.json",
+			embedding=None,
+			created_at=now,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="drive",
+			title="General notes",
+			summary="misc",
+			content="non-notion content",
+			metadata_json={},
+			item_date=now,
+			file_path="/users/u/data/drive/notes.json",
+			embedding=None,
+			created_at=now,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="track",
+			source="spotify",
+			title="Song",
+			summary="music",
+			content="audio",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="show in notion docs", top_k=5)
+
+	assert len(results) >= 1
+	assert all(result.source == "notion" for result in results)
+
+
+def test_hybrid_retriever_prefers_chunk_candidates_over_item_fallback():
+	now = datetime.now(UTC)
+	class _NoItemFallbackDb:
+		def execute(self, _stmt):
+			raise AssertionError("Item fallback query should not run when chunk candidates exist")
+
+	class _ChunkFirstRetriever(HybridRetriever):
+		def _retrieve_chunk_candidates(self, *args, **kwargs):
+			return [
+				RetrievedItem(
+					id=str(uuid.uuid4()),
+					type="document",
+					source="notion",
+					source_id="page-1",
+					title="Policy",
+					summary="Notion policy",
+					content="Policy details",
+					metadata={"file_path": "/users/u/data/notion/policy.json"},
+					item_date=now,
+					file_path="/users/u/data/notion/policy.json",
+					score=0.9,
+					chunk_id="item:1:0",
+					chunk_index=0,
+					chunk_text="notion policy details",
+				)
+			]
+
+	retriever = _ChunkFirstRetriever(_NoItemFallbackDb())
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="show notion docs", top_k=5)
+
+	assert len(results) == 1
+	assert results[0].source == "notion"
+	assert results[0].chunk_id == "item:1:0"
 
 
 def test_context_builder_collects_sources_and_links():

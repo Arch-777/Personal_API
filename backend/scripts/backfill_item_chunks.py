@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from sqlalchemy import func, select, text
+from sqlalchemy import exists, func, select, text
 
 from api.core.db import SessionLocal, engine
 from api.models.item import Item
@@ -20,6 +20,12 @@ def main() -> int:
 	parser = argparse.ArgumentParser(description="Backfill item_chunks for existing items safely.")
 	parser.add_argument("--batch-size", type=int, default=100)
 	parser.add_argument("--limit", type=int, default=None)
+	parser.add_argument(
+		"--mode",
+		choices=["append", "reindex"],
+		default="append",
+		help="append: only process items without chunks (safe default); reindex: rebuild chunks for all items",
+	)
 	args = parser.parse_args()
 
 	database_name = _get_current_database_name()
@@ -36,8 +42,11 @@ def main() -> int:
 	with SessionLocal() as db:
 		total_items = db.scalar(select(func.count()).select_from(Item)) or 0
 		existing_chunks = db.scalar(select(func.count()).select_from(ItemChunk)) or 0
+		chunked_items = db.scalar(select(func.count(func.distinct(ItemChunk.item_id))).select_from(ItemChunk)) or 0
 		print(f"Items in database: {total_items}")
 		print(f"Existing chunks: {existing_chunks}")
+		print(f"Items already chunked: {chunked_items}")
+		print(f"Backfill mode: {args.mode}")
 
 	processed = 0
 	indexed_items = 0
@@ -49,6 +58,10 @@ def main() -> int:
 	while True:
 		with SessionLocal() as db:
 			stmt = select(Item).order_by(Item.id.asc()).limit(batch_size)
+			if args.mode == "append":
+				stmt = stmt.where(
+					~exists(select(ItemChunk.id).where(ItemChunk.item_id == Item.id))
+				)
 			if last_item_id is not None:
 				stmt = stmt.where(Item.id > last_item_id)
 			if remaining_limit is not None:
