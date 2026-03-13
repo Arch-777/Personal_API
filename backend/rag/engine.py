@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from api.core.config import get_settings
 from rag.context import BuiltContext, ContextBuilder
 from rag.embedder import DeterministicEmbedder
+from rag.generator import OllamaGenerator
 from rag.retriever import HybridRetriever
+
+
+logger = logging.getLogger(__name__)
 
 
 class RAGEngine:
@@ -18,12 +24,26 @@ class RAGEngine:
 		embedder: DeterministicEmbedder | None = None,
 		retriever: HybridRetriever | None = None,
 		context_builder: ContextBuilder | None = None,
+		generator: OllamaGenerator | None = None,
+		use_llm: bool | None = None,
 	):
+		settings = get_settings()
 		self.db = db
 		self.user_id = user_id
 		self.embedder = embedder or DeterministicEmbedder()
 		self.retriever = retriever or HybridRetriever(db)
 		self.context_builder = context_builder or ContextBuilder()
+		self.use_llm = settings.rag_llm_enabled if use_llm is None else use_llm
+		self.generator = generator
+		if self.use_llm and self.generator is None:
+			if settings.rag_llm_provider.strip().lower() == "ollama":
+				self.generator = OllamaGenerator(
+					base_url=settings.rag_llm_base_url,
+					model=settings.rag_llm_model,
+					timeout_seconds=settings.rag_llm_timeout_seconds,
+					temperature=settings.rag_llm_temperature,
+					max_tokens=settings.rag_llm_max_tokens,
+				)
 
 	def query(self, query: str, top_k: int = 8, type_filter: str | None = None) -> dict[str, Any]:
 		normalized_query = " ".join(query.split()).strip()
@@ -47,6 +67,14 @@ class RAGEngine:
 
 		built: BuiltContext = self.context_builder.build(normalized_query, retrieved)
 		answer = self.context_builder.compose_answer(normalized_query, retrieved)
+
+		if self.use_llm and self.generator is not None:
+			try:
+				answer = self.generator.generate(query=normalized_query, context_text=built.context_text)
+			except Exception:
+				logger.exception("LLM generation failed; falling back to deterministic RAG answer")
+				# Fall back to deterministic answer path when local LLM is unavailable.
+				answer = self.context_builder.compose_answer(normalized_query, retrieved)
 
 		return {
 			"answer": answer,

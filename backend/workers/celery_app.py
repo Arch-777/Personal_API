@@ -20,6 +20,7 @@ QUEUE_GOOGLE = "connector.google"
 QUEUE_WHATSAPP = "connector.whatsapp"
 QUEUE_NOTION = "connector.notion"
 QUEUE_SPOTIFY = "connector.spotify"
+QUEUE_SLACK = "connector.slack"
 QUEUE_FILE_WATCHER = "pipeline.file-watcher"
 QUEUE_EMBEDDING = "pipeline.embedding"
 
@@ -29,6 +30,7 @@ ALL_QUEUES = (
     QUEUE_WHATSAPP,
     QUEUE_NOTION,
     QUEUE_SPOTIFY,
+    QUEUE_SLACK,
     QUEUE_FILE_WATCHER,
     QUEUE_EMBEDDING,
 )
@@ -38,6 +40,7 @@ TASK_ROUTES = {
     "workers.whatsapp_worker.*": {"queue": QUEUE_WHATSAPP},
     "workers.notion_worker.*": {"queue": QUEUE_NOTION},
     "workers.spotify_worker.*": {"queue": QUEUE_SPOTIFY},
+    "workers.slack_worker.*": {"queue": QUEUE_SLACK},
     "workers.file_watcher_worker.*": {"queue": QUEUE_FILE_WATCHER},
     "workers.embedding_worker.*": {"queue": QUEUE_EMBEDDING},
 }
@@ -101,6 +104,7 @@ celery_app = Celery(
         "workers.whatsapp_worker",
         "workers.notion_worker",
         "workers.spotify_worker",
+        "workers.slack_worker",
         "workers.file_watcher_worker",
         "workers.embedding_worker",
     ],

@@ -1,38 +1,109 @@
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Clock, Database, Search } from "lucide-react";
+
+const stats = [
+  { label: "Total Documents", value: "1,248" },
+  { label: "Connected Apps", value: "5" },
+];
+
+const recentActivities = [
+  {
+    id: "act-1",
+    type: "search",
+    title: 'Search query "Project Alpha timeline"',
+    icon: Search,
+    time: "12 mins ago",
+    response: "Found 14 documents related to Project Alpha timeline. The most relevant document is 'Q3 Alpha Roadmap.pdf' which outlines the major milestones starting next month.",
+  },
+  {
+    id: "act-2",
+    type: "sync",
+    title: "Synced 42 new files from Google Drive",
+    icon: Database,
+    time: "1 hour ago",
+    response: "Successfully indexed 42 files from the 'Marketing Assets' shared drive. Embeddings generated and stored in the vector database.",
+  },
+  {
+    id: "act-3",
+    type: "search",
+    title: 'Search query "Q4 Revenue Projections"',
+    icon: Search,
+    time: "3 hours ago",
+    response: "Q4 revenue is projected to hit $1.2M based on the latest spreadsheet data from the Finance folder. This is a 15% increase compared to Q3.",
+  }
+];
+
 export default function DashboardHome() {
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Good morning, User</h1>
+    <div className="space-y-8 flex-1">
+      <div>
+        <h1 className="text-3xl font-bold tracking-tight">Good morning, Aditee Jadhav</h1>
+        <p className="text-muted-foreground mt-2">Here is a quick overview of your personal knowledge layer today.</p>
+      </div>
+
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <div className="p-6 bg-card rounded-xl border shadow-sm">
-           <div className="text-sm font-medium text-muted-foreground">Total Documents</div>
-           <div className="text-2xl font-bold">1,204</div>
-        </div>
-        <div className="p-6 bg-card rounded-xl border shadow-sm">
-           <div className="text-sm font-medium text-muted-foreground">Connected Apps</div>
-           <div className="text-2xl font-bold">5</div>
-        </div>
-         <div className="p-6 bg-card rounded-xl border shadow-sm">
-           <div className="text-sm font-medium text-muted-foreground">API Usage</div>
-           <div className="text-2xl font-bold">12k / 50k</div>
-        </div>
+        {stats.map((stat, i) => (
+          <Card key={i}>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                {stat.label}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{stat.value}</div>
+            </CardContent>
+          </Card>
+        ))}
       </div>
-      
-      <div className="p-6 bg-card rounded-xl border shadow-sm">
-        <h2 className="text-xl font-semibold mb-4">Recent Activity</h2>
-        <div className="space-y-4">
-           {/* Placeholder for activity stream */}
-           <div className="flex items-center gap-4">
-               <div className="w-2 h-2 rounded-full bg-green-500"></div>
-               <div className="text-sm">Synced 42 new files from Google Drive</div>
-               <div className="text-xs text-muted-foreground ml-auto">2m ago</div>
-           </div>
-           <div className="flex items-center gap-4">
-               <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-               <div className="text-sm">Search query &quot;Project Alpha timeline&quot;</div>
-               <div className="text-xs text-muted-foreground ml-auto">1h ago</div>
-           </div>
-        </div>
-      </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Activity</CardTitle>
+          <CardDescription>Your latest searches and system synchronizations.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Accordion className="w-full">
+            {recentActivities.map((item) => {
+              const Icon = item.icon;
+              return (
+                <AccordionItem key={item.id} value={item.id}>
+                  <AccordionTrigger className="w-full hover:no-underline hover:bg-muted/50 rounded-lg px-2">
+                    <div className="flex items-center gap-3 text-left w-full">
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-secondary-foreground">
+                        <Icon className="size-4" />
+                      </div>
+                      <div className="grid gap-0.5 flex-1">
+                        <p className="text-sm font-medium leading-none">{item.title}</p>
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                          <Clock className="size-3" />
+                          {item.time}
+                        </p>
+                      </div>
+                    </div>
+                  </AccordionTrigger>
+                  <AccordionContent>
+                    <div className="text-sm text-muted-foreground pl-13 pr-4 py-2 leading-relaxed">
+                      {item.response}
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              );
+            })}
+          </Accordion>
+        </CardContent>
+      </Card>
     </div>
   );
 }

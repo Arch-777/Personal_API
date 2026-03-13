@@ -177,6 +177,267 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Restart backend and retry POST /auth/register and POST /auth/login smoke tests.
 
+## Step 11 - Google OAuth Login for Hackathon + Worker Readiness
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/google_oauth.py: Added Google ID token verification against Google tokeninfo endpoint with issuer/audience/email_verified checks.
+  - backend/api/core/config.py: Added GOOGLE_CLIENT_ID and GOOGLE_TOKEN_INFO_URL settings.
+  - backend/api/schemas/auth.py: Added GoogleLoginRequest schema.
+  - backend/api/routers/auth.py: Added POST /auth/google endpoint that creates/updates user and returns JWT.
+  - backend/.env.example: Added Google OAuth env var placeholders.
+  - backend/tests/test_auth_google.py: Added tests for new-user login, existing-user login, and invalid token behavior.
+  - frontend/hooks/use-auth.ts: Fixed email/password login endpoint path and added useGoogleLogin hook.
+- Verification:
+  - Test execution passed: 10 passed in 1.05s.
+  - Command used: Set-Location backend; py -3 -m pytest tests/test_auth_google.py tests/test_api.py tests/test_search.py -q
+- Next:
+  - Add frontend Google Sign-In button/One Tap and call POST /auth/google with id_token.
+  - Reuse Google OAuth refresh tokens for Gmail/Drive connector onboarding flow.
+
+## Step 12 - Spotify Worker and OAuth Connect Flow
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/normalizer/spotify.py: Full normalizer with recently-played and liked-songs support. Distinct source_ids (play:id:played_at vs liked:id). play_type in metadata.
+  - backend/workers/spotify_worker.py: Celery task wiring sync_spotify to run_connector_sync.
+  - backend/workers/connector_sync.py: Enhanced _fetch_spotify_records to fetch recently-played (limit 50, cursor-based) + liked songs (limit 50, best-effort). Added _maybe_refresh_spotify_token for automatic Spotify access token refresh using stored refresh_token.
+  - backend/api/routers/connectors.py: Added GET /v1/connectors/spotify/connect (returns Spotify auth URL with signed state JWT) and GET /v1/connectors/spotify/callback (exchanges code, upserts connector row, stores tokens).
+  - backend/api/core/config.py: Added SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI settings.
+  - backend/.env + backend/.env.example: Added Spotify env var placeholders.
+  - backend/tests/test_normalizers.py: Fixed item type assertion from "media" to "track".
+- Verification:
+  - Test execution passed: 58 passed in 1.40s.
+  - Command used: py -3 -m pytest tests/ -q
+- Next:
+  - Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI in .env.
+  - Register http://127.0.0.1:8000/v1/connectors/spotify/callback in Spotify Dashboard redirect URIs.
+  - Frontend calls GET /v1/connectors/spotify/connect → redirects user to returned URL.
+  - After callback, trigger POST /v1/connectors/spotify/sync to start first data pull.
+
+## Step 13 - Postman Coverage for Spotify Connector Flow
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added collection variables: spotifyAuthUrl, spotifyAuthCode, spotifyState.
+    - Added Connectors folder requests:
+      - GET /v1/connectors/spotify/connect
+      - GET /v1/connectors/spotify/callback?code=&state=
+      - GET /v1/connectors/spotify
+      - POST /v1/connectors/spotify/sync
+    - Added assertions and pre-request guards for code/state dependent callback flow.
+- Verification:
+  - Collection JSON updated successfully and preserves existing auth + variable automation.
+- Next:
+  - In Postman, run Auth/Login first, then Spotify - Get Connect URL.
+  - Complete consent in browser, set spotifyAuthCode, then run callback and sync requests.
+
+## Step 14 - Postman Base URL Alignment (Spotify Connect 404 Fix)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Updated default baseUrl from http://localhost:8000 to http://127.0.0.1:8000.
+    - Updated pre-request baseUrl fallback to http://127.0.0.1:8000.
+- Verification:
+  - Runtime endpoint check returned 401 (route exists and requires auth): GET /v1/connectors/spotify/connect.
+  - OpenAPI check confirms route is loaded: /v1/connectors/spotify/connect present.
+- Next:
+  - In Postman, ensure `baseUrl=http://127.0.0.1:8000` and `apiPrefix=/v1`.
+  - Run Auth/Login, then rerun Spotify - Get Connect URL.
+
+## Step 15 - Postman apiPrefix URL Assembly Fix
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Normalized `apiPrefix` default from `/v1` to `v1`.
+    - Added prerequest normalization to strip leading/trailing slashes from `apiPrefix`.
+    - Updated request raw URLs to use `{{baseUrl}}/{{apiPrefix}}/...`.
+- Verification:
+  - Collection JSON remains valid after update.
+- Next:
+  - In Postman collection variables set `baseUrl=http://127.0.0.1:8000` and `apiPrefix=v1`.
+  - Retry Connectors -> Spotify - Get Connect URL.
+
+## Step 16 - Live Spotify Sync Validation
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Executed live Spotify sync using stored connected connector.
+  - Verified direct Spotify API access for:
+    - GET /v1/me/player/recently-played
+    - GET /v1/me/tracks
+  - Persisted fetched Spotify records into items table.
+- Verification:
+  - Connector row present: platform=spotify, status=connected.
+  - Pre-sync spotify items count: 0.
+  - Sync result: status=completed, records_fetched=100, records_normalized=100, items_upserted=100.
+  - Post-sync spotify items count: 100.
+  - Sample persisted rows confirmed (`type=track`, play-based `source_id`).
+- Next:
+  - Use POST /v1/connectors/spotify/sync for subsequent incremental syncs.
+  - Optional: run sync via Celery worker process (not direct function invocation) for production-like execution.
+
+## Step 17 - Development Fallback Policy (Production Redis Enforcement)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/config.py: Added `ENABLE_INLINE_SYNC_FALLBACK` setting.
+  - backend/api/routers/connectors.py: Inline sync fallback now runs only when both `DEBUG=true` and `ENABLE_INLINE_SYNC_FALLBACK=true`.
+  - backend/.env and backend/.env.example: Added `ENABLE_INLINE_SYNC_FALLBACK=true` for local development convenience.
+- Verification:
+  - Backend test suite passed after changes.
+- Next:
+  - For production: set `DEBUG=false` and `ENABLE_INLINE_SYNC_FALLBACK=false`, and run Redis/Celery.
+
+## Step 18 - Google Connector OAuth + Worker Token Refresh
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Added `GET /v1/connectors/google/connect?platform=gmail|drive|gcal` to generate Google OAuth URL.
+    - Added `GET /v1/connectors/google/callback` to exchange code, resolve user email, and upsert connector tokens.
+  - backend/workers/connector_sync.py:
+    - Added Google token refresh logic before sync for `gmail`, `drive`, `gcal` connectors.
+  - backend/api/core/config.py:
+    - Added `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI` settings.
+  - backend/.env and backend/.env.example:
+    - Added Google connector OAuth env variables.
+- Verification:
+  - Backend tests passed after changes: 58 passed.
+- Next:
+  - Register `http://127.0.0.1:8000/v1/connectors/google/callback` in Google Cloud OAuth redirect URIs.
+  - Connect each platform (`gmail`, `drive`, `gcal`) and trigger `POST /v1/connectors/{platform}/sync`.
+
+## Step 19 - Google App Login/Signup OAuth + Full Postman Endpoint Coverage
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/routers/auth.py:
+    - Added `GET /auth/google/connect` to issue Google OAuth URL for app login/signup.
+    - Added `GET /auth/google/callback` to exchange code/state and return PersonalAPI JWT.
+  - backend/api/core/config.py:
+    - Added `GOOGLE_AUTH_REDIRECT_URI` setting.
+  - backend/.env and backend/.env.example:
+    - Added `GOOGLE_AUTH_REDIRECT_URI` values.
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added Auth requests for:
+      - `POST /auth/google`
+      - `GET /auth/google/connect`
+      - `GET /auth/google/callback`
+    - Added Connectors requests for missing endpoints:
+      - `GET /v1/connectors/`
+      - `GET /v1/connectors/google/connect`
+      - `GET /v1/connectors/google/callback`
+      - Generic platform endpoints:
+        - `GET /v1/connectors/{platform}`
+        - `POST /v1/connectors/{platform}/bootstrap`
+        - `POST /v1/connectors/{platform}/sync`
+    - Added new collection variables for Google auth flows and connector platform selection.
+- Verification:
+  - Postman collection JSON validation passed.
+  - Backend tests passed: 58 passed.
+- Next:
+  - Register both Google redirect URIs in Google Cloud Console:
+    - `http://127.0.0.1:8000/auth/google/callback`
+    - `http://127.0.0.1:8000/v1/connectors/google/callback`
+  - Use Postman to execute Google app auth flow and Google connector onboarding flow end-to-end.
+
+## Step 20 - Postman Google Quick Actions (Gmail/Drive/GCal)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added explicit Google connect shortcut requests:
+      - Google Gmail - Get Connect URL
+      - Google Drive - Get Connect URL
+      - Google Calendar - Get Connect URL
+    - Added explicit Google sync shortcut requests:
+      - Gmail - Trigger Sync
+      - Drive - Trigger Sync
+      - GCal - Trigger Sync
+    - Kept existing generic connector endpoints for flexible platform testing.
+- Verification:
+  - Collection JSON validation passed.
+- Next:
+  - Use shortcuts for quick platform testing without changing variables.
+
+## Step 21 - Notion Worker Deep Ingestion Enrichment
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Enhanced Notion ingestion from search-only results to enriched records.
+    - Added bounded enrichment controls for page content and database expansion.
+    - Added plain-text extraction from Notion block children.
+    - Added database row expansion by querying discovered database objects.
+  - backend/tests/test_normalizers.py:
+    - Added unit tests for Notion block plain-text extraction.
+    - Added unit test coverage for database-row fallback behavior on fetch failure.
+- Verification:
+  - Code changes applied successfully.
+  - Local test execution in current shell is blocked by missing runtime dependencies (`psycopg`, `celery`) during collection.
+  - Command attempted: `pytest -q` (with `PYTHONPATH=.`).
+- Next:
+  - Install backend dependencies in the active environment, rerun `pytest -q`, and then run a live Notion sync to confirm record quality and item upsert counts.
+
+## Step 22 - Slack Connector Backend Integration
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/config.py: Added Slack OAuth settings for client id, client secret, and redirect URI.
+  - backend/api/routers/connectors.py: Added GET /v1/connectors/slack/connect and GET /v1/connectors/slack/callback with Slack OAuth v2 token exchange and connector upsert flow.
+  - backend/workers/connector_sync.py: Registered Slack in the generic connector sync runner and added bounded Slack conversation/message ingestion with per-user profile enrichment and incremental cursor tracking.
+  - backend/normalizer/slack.py: Added Slack message normalizer producing message items with channel and sender metadata.
+  - backend/workers/slack_worker.py, backend/workers/celery_app.py, backend/docker-compose.yml: Added dedicated Slack Celery task, queue routing, include registration, and worker service.
+  - backend/.env.example: Added Slack environment variable placeholders.
+  - backend/tests/test_normalizers.py, backend/tests/test_celery_foundation.py, backend/tests/test_api.py: Added Slack-focused test coverage for normalizer behavior, sync fetch cursoring, queue registration, and OAuth connect URL generation.
+- Verification:
+  - Targeted tests passed: 58 passed in 1.87s.
+  - Command used: `Set-Location backend; py -3 -m pytest tests/test_normalizers.py tests/test_celery_foundation.py tests/test_api.py -q`
+- Next:
+  - Set `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, and `SLACK_REDIRECT_URI` in backend/.env.
+  - Register `http://127.0.0.1:8000/v1/connectors/slack/callback` in the Slack app OAuth redirect URLs.
+  - Start `worker-slack` alongside the API and trigger `POST /v1/connectors/slack/sync` after completing the OAuth callback.
+
+## Step 23 - Postman Gap Fill + Notion/Slack Worker Verification
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added missing Chat endpoints:
+      - `POST /v1/chat/message`
+      - `GET /v1/chat/{session_id}/history`
+    - Added missing Slack OAuth endpoints:
+      - `GET /v1/connectors/slack/connect`
+      - `GET /v1/connectors/slack/callback`
+    - Added supporting collection variables for chat and Slack OAuth flow (`chatSessionId`, `chatMessage`, `slackAuthUrl`, `slackAuthCode`, `slackAuthState`).
+  - Verified Notion and Slack workers remain correctly wired through Celery and connector sync runner:
+    - `workers.notion_worker.sync_notion`
+    - `workers.slack_worker.sync_slack`
+- Verification:
+  - Collection JSON parses successfully.
+  - Route coverage check confirms no missing non-doc HTTP endpoints in Postman collection.
+  - Focused tests passed:
+    - `pytest tests/test_normalizers.py tests/test_api.py -q` with `PYTHONPATH=.` -> 20 passed
+    - `pytest tests/test_celery_foundation.py -q` with `PYTHONPATH=.` -> 38 passed
+- Next:
+  - Optional: add explicit Postman requests for OpenAPI docs routes (`/openapi.json`, `/docs`) if API exploration in Postman is needed.
+
+## Step 24 - Slack OAuth Redirect Scheme Fix (HTTPS to HTTP)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/.env:
+    - Updated `SLACK_REDIRECT_URI` from `https://127.0.0.1:8000/v1/connectors/slack/callback` to `http://127.0.0.1:8000/v1/connectors/slack/callback` to match local Uvicorn (non-TLS) runtime.
+- Verification:
+  - Configuration now aligns with local server transport (HTTP), preventing TLS handshake bytes from being sent to an HTTP socket.
+- Next:
+  - Ensure Slack app OAuth Redirect URLs include the exact same callback URI: `http://127.0.0.1:8000/v1/connectors/slack/callback`.
+  - Restart API process and retry Slack connect flow.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
@@ -191,6 +452,7 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - drive -> workers.google_worker.sync_drive
   - whatsapp -> workers.whatsapp_worker.sync_whatsapp
   - notion -> workers.notion_worker.sync_notion
+  - slack -> workers.slack_worker.sync_slack
   - spotify -> workers.spotify_worker.sync_spotify
 
 ### 2. Chat Endpoint Contract (for Person 2 chat implementation)
@@ -330,3 +592,95 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Coverage: RAG chunk/embed/retrieve/context/engine behavior, chat endpoint orchestration, and regression checks for workers, normalizers, API routes, and search.
 - Next:
   - Implement Workstream 5 (Realtime + MCP integration): websocket event dispatch for sync/index updates and MCP tool endpoints for user-scoped retrieval.
+
+## Step 15 - Optional Qwen/Ollama LLM Layer for RAG Answers
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/rag/generator.py: Added Ollama generator client for local model inference.
+  - backend/rag/engine.py: Added optional LLM generation path with safe fallback to deterministic answer composition.
+  - backend/api/core/config.py: Added RAG LLM configuration settings (enable flag, provider, base URL, model, timeout, temperature, max tokens).
+  - backend/.env.example: Added environment variables for Ollama + qwen2.5:1.5b integration.
+  - backend/tests/test_rag.py: Added test coverage for engine LLM path when enabled.
+- Verification:
+  - RAG tests passed: 8/8 tests (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_rag.py -v
+  - Local environment check: Ollama installed (0.17.4), qwen2.5:1.5b model not yet pulled.
+- Next:
+  - Pull qwen2.5:1.5b model locally and enable RAG_LLM_ENABLED=true in backend runtime environment.
+
+## Step 16 - Chunk Indexing, Chunk Retrieval, and Intent-Aware Reranking
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/models/item_chunk.py: Added per-chunk storage model with pgvector embedding support.
+  - backend/migrations/002_item_chunks.sql: Added chunk table, full-text index, and vector index migration.
+  - backend/rag/indexer.py: Added reusable chunk indexing pipeline to split item text, generate chunk embeddings, and persist chunk rows.
+  - backend/workers/embedding_worker.py: Replaced placeholder embedding completion with real chunk indexing and aggregate item embedding generation.
+  - backend/workers/connector_sync.py: Added post-ingest indexing task enqueueing for newly upserted items.
+  - backend/rag/retriever.py: Added chunk-candidate retrieval, grouping/deduplication, metadata-aware reranking, and source/domain intent handling for Spotify/email/linkedin style queries.
+  - backend/normalizer/spotify.py: Enriched Spotify metadata with track/favorites/ranking fields and normalized type to track.
+  - backend/tests/test_rag.py: Added regression coverage for favorites-style Spotify retrieval and deduplication.
+  - backend/tests/test_normalizers.py: Updated Spotify normalizer assertions for track metadata.
+- Verification:
+  - Targeted backend regression suites passed: 65/65 tests in 9.63s (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_rag.py tests/test_normalizers.py tests/test_api.py tests/test_search.py tests/test_celery_foundation.py -v
+  - Coverage: chunking logic, deterministic embeddings, LLM path, chunk-aware retriever behavior, favorites/mail intent reranking, connector/api/search regressions, and worker foundation checks.
+- Next:
+  - Apply migration 002_item_chunks.sql to the target database and backfill chunk embeddings for existing items so live chat uses chunk/vector retrieval immediately.
+
+## Step 25 - Coolify Production Deployment Runbook
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Documented production deployment procedure for Coolify using existing backend Docker Compose stack.
+  - Defined production env variable mapping and OAuth callback domain updates.
+  - Added deploy sequencing guidance: backend first, then frontend, then OAuth validation.
+- Verification:
+  - Reviewed repository deployment artifacts:
+    - backend/docker-compose.yml
+    - backend/Dockerfile
+    - backend/.env.example
+    - frontend/lib/api-client.ts
+- Next:
+  - Execute deployment checklist in Coolify with production domains and secrets.
+
+## Step 26 - Coolify Backend-Only Deployment (No Frontend)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Produced backend-only deployment procedure for Coolify using Docker Compose services in backend/docker-compose.yml.
+  - Scoped configuration to API domain, backend env vars, migrations, volumes, and OAuth callback URLs.
+- Verification:
+  - Deployment guidance validated against:
+    - backend/docker-compose.yml
+    - backend/.env.example
+    - backend/migrations/002_item_chunks.sql
+- Next:
+  - Deploy backend app in Coolify and run production smoke tests on API + connector sync queue.
+
+## Step 27 - Coolify Compose for Azure PostgreSQL Production
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/docker-compose.coolify.yml: Added a production-focused Docker Compose stack for Coolify.
+  - Removed local PostgreSQL service from deployment topology and kept Redis + API + Celery workers.
+  - Preserved queue-specific worker commands and startup ordering via Redis healthcheck dependency.
+- Verification:
+  - Compose file reviewed against existing backend worker/task routing and startup commands.
+  - File is ready to be selected in Coolify as the compose definition path.
+- Next:
+  - Create Coolify application using backend/docker-compose.coolify.yml.
+  - Add production environment variables (including Azure PostgreSQL DATABASE_URL and OAuth callbacks).
+
+## Step 28 - Coolify Build Context Path Fix (Dockerfile Not Found)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/docker-compose.coolify.yml: Updated all service build contexts from `.` to `./backend` to align with Coolify deployment from repository root.
+  - Preserved per-service commands and runtime behavior; only image build path resolution was changed.
+- Verification:
+  - Fix directly addresses deployment error: `failed to read dockerfile: open Dockerfile: no such file or directory`.
+  - With `Base Directory=/` and compose path `backend/docker-compose.coolify.yml`, Docker now resolves to `backend/Dockerfile`.
+- Next:
+  - Redeploy from Coolify and validate `api` service startup, DB connectivity, and `/health` endpoint.

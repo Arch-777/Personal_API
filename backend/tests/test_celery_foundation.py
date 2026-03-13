@@ -27,6 +27,7 @@ def _import_celery_app():
             QUEUE_FILE_WATCHER,
             QUEUE_GOOGLE,
             QUEUE_NOTION,
+            QUEUE_SLACK,
             QUEUE_SPOTIFY,
             QUEUE_WHATSAPP,
             TASK_ROUTES,
@@ -43,6 +44,7 @@ def _import_celery_app():
         QUEUE_GOOGLE,
         QUEUE_WHATSAPP,
         QUEUE_NOTION,
+        QUEUE_SLACK,
         QUEUE_SPOTIFY,
         QUEUE_FILE_WATCHER,
         QUEUE_EMBEDDING,
@@ -57,20 +59,21 @@ def _import_celery_app():
 class TestQueueConstants:
     def test_queue_names_are_strings(self):
         (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GOOGLE, QUEUE_WHATSAPP,
-         QUEUE_NOTION, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
 
         for name in ALL_QUEUES:
             assert isinstance(name, str) and name, f"Expected non-empty string, got {name!r}"
 
     def test_all_queues_contains_all_expected_names(self):
         (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GOOGLE, QUEUE_WHATSAPP,
-         QUEUE_NOTION, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
 
         expected = {
             QUEUE_DEFAULT,
             QUEUE_GOOGLE,
             QUEUE_WHATSAPP,
             QUEUE_NOTION,
+            QUEUE_SLACK,
             QUEUE_SPOTIFY,
             QUEUE_FILE_WATCHER,
             QUEUE_EMBEDDING,
@@ -83,12 +86,13 @@ class TestQueueConstants:
 
     def test_specific_queue_name_values(self):
         (_, _, _, _, QUEUE_DEFAULT, QUEUE_GOOGLE, QUEUE_WHATSAPP,
-         QUEUE_NOTION, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
 
         assert QUEUE_DEFAULT == "default"
         assert QUEUE_GOOGLE == "connector.google"
         assert QUEUE_WHATSAPP == "connector.whatsapp"
         assert QUEUE_NOTION == "connector.notion"
+        assert QUEUE_SLACK == "connector.slack"
         assert QUEUE_SPOTIFY == "connector.spotify"
         assert QUEUE_FILE_WATCHER == "pipeline.file-watcher"
         assert QUEUE_EMBEDDING == "pipeline.embedding"
@@ -106,6 +110,7 @@ class TestTaskRoutes:
             "workers.google_worker.*",
             "workers.whatsapp_worker.*",
             "workers.notion_worker.*",
+            "workers.slack_worker.*",
             "workers.spotify_worker.*",
             "workers.file_watcher_worker.*",
             "workers.embedding_worker.*",
@@ -115,11 +120,12 @@ class TestTaskRoutes:
 
     def test_routes_map_to_correct_queues(self):
         (_, _, _, _, QUEUE_DEFAULT, QUEUE_GOOGLE, QUEUE_WHATSAPP,
-         QUEUE_NOTION, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, TASK_ROUTES) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, TASK_ROUTES) = _import_celery_app()
 
         assert TASK_ROUTES["workers.google_worker.*"]["queue"] == QUEUE_GOOGLE
         assert TASK_ROUTES["workers.whatsapp_worker.*"]["queue"] == QUEUE_WHATSAPP
         assert TASK_ROUTES["workers.notion_worker.*"]["queue"] == QUEUE_NOTION
+        assert TASK_ROUTES["workers.slack_worker.*"]["queue"] == QUEUE_SLACK
         assert TASK_ROUTES["workers.spotify_worker.*"]["queue"] == QUEUE_SPOTIFY
         assert TASK_ROUTES["workers.file_watcher_worker.*"]["queue"] == QUEUE_FILE_WATCHER
         assert TASK_ROUTES["workers.embedding_worker.*"]["queue"] == QUEUE_EMBEDDING
@@ -365,6 +371,7 @@ class TestWorkerIncludes:
         "workers.google_worker",
         "workers.whatsapp_worker",
         "workers.notion_worker",
+        "workers.slack_worker",
         "workers.spotify_worker",
         "workers.file_watcher_worker",
         "workers.embedding_worker",

@@ -36,27 +36,163 @@
     }
   ],
   "variable": [
-    { "key": "baseUrl", "value": "http://127.0.0.1:8000", "type": "string" },
-    { "key": "apiPrefix", "value": "v1", "type": "string" },
-    { "key": "email", "value": "qa.user@example.com", "type": "string" },
-    { "key": "password", "value": "ChangeMe123!", "type": "string" },
-    { "key": "fullName", "value": "QA User", "type": "string" },
-    { "key": "accessToken", "value": "", "type": "string" },
-    { "key": "apiKeyId", "value": "", "type": "string" },
-    { "key": "developerApiKey", "value": "", "type": "string" },
-    { "key": "searchQuery", "value": "meeting notes", "type": "string" },
-    { "key": "typeFilter", "value": "document", "type": "string" },
-    { "key": "limit", "value": "20", "type": "string" },
-    { "key": "offset", "value": "0", "type": "string" },
-    { "key": "spotifyAuthUrl", "value": "", "type": "string" },
-    { "key": "spotifyAuthCode", "value": "", "type": "string" },
-    { "key": "spotifyState", "value": "", "type": "string" },
-    { "key": "googleIdToken", "value": "", "type": "string" },
-    { "key": "googleAuthUrl", "value": "", "type": "string" },
-    { "key": "googleAuthCode", "value": "", "type": "string" },
-    { "key": "googleAuthState", "value": "", "type": "string" },
-    { "key": "googleConnectorPlatform", "value": "gmail", "type": "string" },
-    { "key": "connectorPlatform", "value": "gmail", "type": "string" }
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "apiPrefix",
+      "value": "v1",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "qa.user@example.com",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "ChangeMe123!",
+      "type": "string"
+    },
+    {
+      "key": "fullName",
+      "value": "QA User",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "apiKeyId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "developerApiKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "searchQuery",
+      "value": "meeting notes",
+      "type": "string"
+    },
+    {
+      "key": "typeFilter",
+      "value": "document",
+      "type": "string"
+    },
+    {
+      "key": "limit",
+      "value": "20",
+      "type": "string"
+    },
+    {
+      "key": "offset",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "spotifyAuthUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "spotifyAuthCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "spotifyState",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "googleIdToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "googleAuthUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "googleAuthCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "googleAuthState",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "googleConnectorPlatform",
+      "value": "gmail",
+      "type": "string"
+    },
+    {
+      "key": "connectorPlatform",
+      "value": "gmail",
+      "type": "string"
+    },
+    {
+      "key": "notionToken",
+      "value": "",
+      "type": "string",
+      "description": "Notion internal integration token (starts with ntn_ or secret_)"
+    },
+    {
+      "key": "notionAuthUrl",
+      "value": "",
+      "type": "string",
+      "description": "Notion OAuth URL from /notion/connect"
+    },
+    {
+      "key": "notionAuthCode",
+      "value": "",
+      "type": "string",
+      "description": "Code from Notion OAuth callback"
+    },
+    {
+      "key": "notionAuthState",
+      "value": "",
+      "type": "string",
+      "description": "State from Notion OAuth callback"
+    },
+    {
+      "key": "slackAuthUrl",
+      "value": "",
+      "type": "string",
+      "description": "Slack OAuth URL from /connectors/slack/connect"
+    },
+    {
+      "key": "slackAuthCode",
+      "value": "",
+      "type": "string",
+      "description": "Code from Slack OAuth callback"
+    },
+    {
+      "key": "slackAuthState",
+      "value": "",
+      "type": "string",
+      "description": "State from Slack OAuth callback"
+    },
+    {
+      "key": "chatSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chatMessage",
+      "value": "Summarize my latest updates",
+      "type": "string"
+    }
   ],
   "item": [
     {
@@ -65,7 +201,9 @@
         {
           "name": "Health Check",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
@@ -100,9 +238,16 @@
         {
           "name": "Register User",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"full_name\": \"{{fullName}}\"\n}"
@@ -131,9 +276,16 @@
         {
           "name": "Login",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
@@ -165,9 +317,16 @@
         {
           "name": "Google Login (ID Token)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"id_token\": \"{{googleIdToken}}\"\n}"
@@ -210,7 +369,9 @@
         {
           "name": "Google OAuth Connect (App Login)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
@@ -238,7 +399,9 @@
         {
           "name": "Google OAuth Callback (App Login)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
@@ -246,8 +409,14 @@
               "host": ["{{baseUrl}}"],
               "path": ["auth", "google", "callback"],
               "query": [
-                { "key": "code", "value": "{{googleAuthCode}}" },
-                { "key": "state", "value": "{{googleAuthState}}" }
+                {
+                  "key": "code",
+                  "value": "{{googleAuthCode}}"
+                },
+                {
+                  "key": "state",
+                  "value": "{{googleAuthState}}"
+                }
               ]
             },
             "description": "Exchanges Google code+state and returns PersonalAPI access token."
@@ -320,8 +489,14 @@
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "emails", ""],
               "query": [
-                { "key": "limit", "value": "{{limit}}" },
-                { "key": "offset", "value": "{{offset}}" }
+                {
+                  "key": "limit",
+                  "value": "{{limit}}"
+                },
+                {
+                  "key": "offset",
+                  "value": "{{offset}}"
+                }
               ]
             },
             "description": "Returns paginated email-like items for the authenticated user."
@@ -355,8 +530,14 @@
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "documents", ""],
               "query": [
-                { "key": "limit", "value": "{{limit}}" },
-                { "key": "offset", "value": "{{offset}}" }
+                {
+                  "key": "limit",
+                  "value": "{{limit}}"
+                },
+                {
+                  "key": "offset",
+                  "value": "{{offset}}"
+                }
               ]
             },
             "description": "Returns paginated document-like items for the authenticated user."
@@ -387,9 +568,18 @@
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "search", ""],
               "query": [
-                { "key": "q", "value": "{{searchQuery}}" },
-                { "key": "top_k", "value": "10" },
-                { "key": "type_filter", "value": "{{typeFilter}}" }
+                {
+                  "key": "q",
+                  "value": "{{searchQuery}}"
+                },
+                {
+                  "key": "top_k",
+                  "value": "10"
+                },
+                {
+                  "key": "type_filter",
+                  "value": "{{typeFilter}}"
+                }
               ]
             },
             "description": "Runs semantic-style search over user-scoped items and returns ranked results."
@@ -415,13 +605,105 @@
       ]
     },
     {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Send Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"{{chatMessage}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/chat/message",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "chat", "message"]
+            },
+            "description": "Sends a chat message through RAG and returns assistant response with session id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Chat response fields exist', function () {",
+                  "  pm.expect(body).to.have.property('session_id');",
+                  "  pm.expect(body).to.have.property('answer');",
+                  "});",
+                  "if (body.session_id) { pm.collectionVariables.set('chatSessionId', body.session_id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/chat/{{chatSessionId}}/history?limit=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "chat", "{{chatSessionId}}", "history"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Returns chronological chat history for a session id."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('chatSessionId')) {",
+                  "  throw new Error('chatSessionId is empty. Run Chat -> Send Message first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('History response is array', function () { pm.expect(body).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Developer",
       "item": [
         {
           "name": "Create API Key",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"name\": \"postman-key\",\n  \"allowed_channels\": [\"telegram\"],\n  \"agent_type\": \"openclaw\"\n}"
@@ -566,7 +848,10 @@
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
               "query": [
-                { "key": "platform", "value": "{{googleConnectorPlatform}}" }
+                {
+                  "key": "platform",
+                  "value": "{{googleConnectorPlatform}}"
+                }
               ]
             },
             "description": "Returns Google OAuth connect URL for gmail/drive/gcal connector onboarding."
@@ -589,7 +874,9 @@
         {
           "name": "Google Connector - Callback (Manual Code Exchange)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
@@ -597,8 +884,14 @@
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "connectors", "google", "callback"],
               "query": [
-                { "key": "code", "value": "{{googleAuthCode}}" },
-                { "key": "state", "value": "{{googleAuthState}}" }
+                {
+                  "key": "code",
+                  "value": "{{googleAuthCode}}"
+                },
+                {
+                  "key": "state",
+                  "value": "{{googleAuthState}}"
+                }
               ]
             },
             "description": "Exchanges Google auth code/state and creates connector for selected platform encoded in state."
@@ -622,6 +915,149 @@
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "var body = pm.response.json();",
                   "pm.test('Connector connected', function () { pm.expect(body.status).to.eql('connected'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Google Gmail - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform=gmail",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                {
+                  "key": "platform",
+                  "value": "gmail"
+                }
+              ]
+            },
+            "description": "Shortcut: returns Google OAuth URL for Gmail connector onboarding."
+          }
+        },
+        {
+          "name": "Google Drive - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform=drive",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                {
+                  "key": "platform",
+                  "value": "drive"
+                }
+              ]
+            },
+            "description": "Shortcut: returns Google OAuth URL for Drive connector onboarding."
+          }
+        },
+        {
+          "name": "Google Calendar - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform=gcal",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                {
+                  "key": "platform",
+                  "value": "gcal"
+                }
+              ]
+            },
+            "description": "Shortcut: returns Google OAuth URL for Calendar connector onboarding."
+          }
+        },
+        {
+          "name": "Slack - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/slack/connect",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "slack", "connect"]
+            },
+            "description": "Returns Slack OAuth authorize URL for the current user."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connect URL exists', function () {",
+                  "  pm.expect(body).to.have.property('url');",
+                  "});",
+                  "pm.collectionVariables.set('slackAuthUrl', body.url);",
+                  "try {",
+                  "  var parsed = new URL(body.url);",
+                  "  var state = parsed.searchParams.get('state');",
+                  "  if (state) { pm.collectionVariables.set('slackAuthState', state); }",
+                  "} catch (e) {}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Slack - Callback (Manual Code Exchange)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/slack/callback?code={{slackAuthCode}}&state={{slackAuthState}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "slack", "callback"],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{slackAuthCode}}"
+                },
+                {
+                  "key": "state",
+                  "value": "{{slackAuthState}}"
+                }
+              ]
+            },
+            "description": "Exchanges Slack auth code/state and stores Slack connector tokens."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('slackAuthCode')) { throw new Error('slackAuthCode is empty. Complete Slack consent first.'); }",
+                  "if (!pm.collectionVariables.get('slackAuthState')) { throw new Error('slackAuthState is empty. Run Slack - Get Connect URL first.'); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connector connected', function () {",
+                  "  pm.expect(body.status).to.eql('connected');",
+                  "  pm.expect(body.platform).to.eql('slack');",
+                  "});"
                 ]
               }
             }
@@ -665,7 +1101,9 @@
         {
           "name": "Spotify - Callback (Manual Code Exchange)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
             "header": [],
             "url": {
@@ -673,8 +1111,14 @@
               "host": ["{{baseUrl}}"],
               "path": ["{{apiPrefix}}", "connectors", "spotify", "callback"],
               "query": [
-                { "key": "code", "value": "{{spotifyAuthCode}}" },
-                { "key": "state", "value": "{{spotifyState}}" }
+                {
+                  "key": "code",
+                  "value": "{{spotifyAuthCode}}"
+                },
+                {
+                  "key": "state",
+                  "value": "{{spotifyState}}"
+                }
               ]
             },
             "description": "Exchanges Spotify authorization code and state for stored connector tokens. Set spotifyAuthCode manually from browser callback URL."
@@ -769,6 +1213,165 @@
           ]
         },
         {
+          "name": "Notion - Quick Connect (Internal Token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function() { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Connected', function() { pm.expect(body.status).to.eql('connected'); });",
+                  "console.log('Notion workspace: ' + body.workspace);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"access_token\": \"{{notionToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/notion/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "notion", "token"]
+            },
+            "description": "Register a Notion internal integration token directly (no OAuth needed). Get your token from https://www.notion.so/my-integrations"
+          }
+        },
+        {
+          "name": "Notion - Get Connect URL (OAuth)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', function() { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "if (body.url) { pm.collectionVariables.set('notionAuthUrl', body.url); }",
+                  "console.log('Notion OAuth URL: ' + (body.url || 'not returned'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/notion/connect",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "notion", "connect"]
+            },
+            "description": "Get OAuth authorisation URL. Requires NOTION_CLIENT_ID + NOTION_CLIENT_SECRET in .env"
+          }
+        },
+        {
+          "name": "Notion - Callback (Manual Code Exchange)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('notionAuthCode')) { throw new Error('Set notionAuthCode first'); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/notion/callback?code={{notionAuthCode}}&state={{notionAuthState}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "notion", "callback"],
+              "query": [
+                {
+                  "key": "code",
+                  "value": "{{notionAuthCode}}"
+                },
+                {
+                  "key": "state",
+                  "value": "{{notionAuthState}}"
+                }
+              ]
+            },
+            "description": "Exchange Notion OAuth code. Paste code and state from browser redirect into collection variables."
+          }
+        },
+        {
+          "name": "Notion - Get Connector",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/notion",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "notion"]
+            }
+          }
+        },
+        {
+          "name": "Notion - Trigger Sync",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Accepted or OK', function() { pm.expect(pm.response.code).to.be.oneOf([200, 202]); });",
+                  "var body = pm.response.json();",
+                  "console.log('Sync result: ' + JSON.stringify(body));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/notion/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "notion", "sync"]
+            },
+            "description": "Trigger incremental Notion workspace sync (pages + database rows)."
+          }
+        },
+        {
           "name": "Connector - Get By Platform",
           "request": {
             "method": "GET",
@@ -815,6 +1418,45 @@
               ]
             },
             "description": "Queues sync for selected connector platform."
+          }
+        },
+        {
+          "name": "Gmail - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/gmail/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "gmail", "sync"]
+            },
+            "description": "Shortcut: triggers Gmail sync."
+          }
+        },
+        {
+          "name": "Drive - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/drive/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "drive", "sync"]
+            },
+            "description": "Shortcut: triggers Drive sync."
+          }
+        },
+        {
+          "name": "GCal - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/gcal/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "gcal", "sync"]
+            },
+            "description": "Shortcut: triggers Google Calendar sync."
           }
         }
       ]

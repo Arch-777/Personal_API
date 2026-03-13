@@ -228,21 +228,53 @@ def test_connector_sync_queues_expected_worker_task():
 	app.dependency_overrides[get_db] = lambda: fake_db
 	app.dependency_overrides[get_current_user] = lambda: current_user
 
-	with patch.object(connectors_router.celery_app, "send_task", return_value=SimpleNamespace(id="task-1")) as send_task:
+	with patch.object(
+		connectors_router,
+		"get_settings",
+		return_value=SimpleNamespace(debug=False, enable_inline_sync_fallback=False),
+	):
+		with patch.object(connectors_router.celery_app, "send_task", return_value=SimpleNamespace(id="task-1")) as send_task:
+			client = TestClient(app)
+			response = client.post("/v1/connectors/gmail/sync")
+
+			assert response.status_code == 202
+			assert response.json() == {"status": "sync_queued", "platform": "gmail"}
+			assert fake_db.committed is True
+			assert connector.status == "syncing"
+
+			send_task.assert_called_once()
+			called_task_name = send_task.call_args.args[0]
+			called_args = send_task.call_args.kwargs["args"]
+			assert called_task_name == "workers.google_worker.sync_gmail"
+			assert called_args[0] == str(connector.id)
+			assert called_args[1] == str(current_user.id)
+			assert called_args[2] == "0"
+
+	app.dependency_overrides.clear()
+
+
+def test_slack_connect_returns_authorize_url():
+	from unittest.mock import patch
+	from api.routers import connectors as connectors_router
+
+	app.dependency_overrides[get_current_user] = _override_user
+
+	with patch.object(
+		connectors_router,
+		"get_settings",
+		return_value=SimpleNamespace(
+			slack_client_id="client-id",
+			slack_client_secret="client-secret",
+			slack_redirect_uri="http://127.0.0.1:8000/v1/connectors/slack/callback",
+		),
+	):
 		client = TestClient(app)
-		response = client.post("/v1/connectors/gmail/sync")
+		response = client.get("/v1/connectors/slack/connect")
 
-	assert response.status_code == 202
-	assert response.json() == {"status": "sync_queued", "platform": "gmail"}
-	assert fake_db.committed is True
-	assert connector.status == "syncing"
-
-	send_task.assert_called_once()
-	called_task_name = send_task.call_args.args[0]
-	called_args = send_task.call_args.kwargs["args"]
-	assert called_task_name == "workers.google_worker.sync_gmail"
-	assert called_args[0] == str(connector.id)
-	assert called_args[1] == str(current_user.id)
-	assert called_args[2] == "0"
+	assert response.status_code == 200
+	body = response.json()
+	assert body["url"].startswith("https://slack.com/oauth/v2/authorize?")
+	assert "client_id=client-id" in body["url"]
+	assert "state=" in body["url"]
 
 	app.dependency_overrides.clear()

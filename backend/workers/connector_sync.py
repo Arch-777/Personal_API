@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from api.core.config import get_settings
@@ -22,6 +24,7 @@ from normalizer.drive import DriveNormalizer
 from normalizer.gcal import GCalNormalizer
 from normalizer.gmail import GmailNormalizer
 from normalizer.notion import NotionNormalizer
+from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
 from normalizer.whatsapp import WhatsAppNormalizer
 
@@ -29,6 +32,9 @@ from normalizer.whatsapp import WhatsAppNormalizer
 NOTION_VERSION = "2022-06-28"
 HTTP_TIMEOUT_SECONDS = 20.0
 _FILENAME_SAFE_PATTERN = re.compile(r"[^a-zA-Z0-9_.-]+")
+NOTION_MAX_PAGE_ENRICH = 20
+NOTION_MAX_DATABASES = 5
+NOTION_MAX_DATABASE_ROWS = 20
 
 NORMALIZERS: dict[str, BaseNormalizer] = {
     "gmail": GmailNormalizer(),
@@ -36,8 +42,11 @@ NORMALIZERS: dict[str, BaseNormalizer] = {
     "gcal": GCalNormalizer(),
     "whatsapp": WhatsAppNormalizer(),
     "notion": NotionNormalizer(),
+    "slack": SlackNormalizer(),
     "spotify": SpotifyNormalizer(),
 }
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -58,6 +67,10 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
     try:
         with SessionLocal() as db:
             connector = _get_connector(db, parsed_connector_id, parsed_user_id, platform)
+            if platform in {"gmail", "drive", "gcal"}:
+                _maybe_refresh_google_token(db, connector)
+            if platform == "spotify":
+                _maybe_refresh_spotify_token(db, connector)
             tokens = _resolve_tokens(connector)
 
             source_cursor = cursor if cursor is not None else connector.sync_cursor
@@ -76,6 +89,8 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             connector.status = "connected"
             connector.error_message = None
             db.commit()
+
+        _enqueue_indexing_tasks(item_ids=upserted_item_ids, user_id=parsed_user_id, source=platform)
 
         return {
             "status": "completed",
@@ -104,6 +119,97 @@ def _get_connector(db, connector_id: uuid.UUID, user_id: uuid.UUID, platform: st
     if connector is None:
         raise ValueError(f"Connector not found for platform '{platform}'")
     return connector
+
+
+def _maybe_refresh_spotify_token(db: Any, connector: Connector) -> None:
+    """Refresh the Spotify access token when it is expired or expires within 5 minutes."""
+    settings = get_settings()
+    if not settings.spotify_client_id or not settings.spotify_client_secret:
+        return  # OAuth not configured; dev/bootstrap tokens used as-is.
+
+    if connector.token_expires_at is None:
+        return
+
+    expiry = connector.token_expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    if expiry > datetime.now(UTC) + timedelta(minutes=5):
+        return  # Still valid.
+
+    refresh_token = connector.encrypted_refresh_token
+    if not refresh_token:
+        raise ValueError("Spotify access token expired and no refresh token is stored")
+
+    credentials = base64.b64encode(
+        f"{settings.spotify_client_id}:{settings.spotify_client_secret}".encode()
+    ).decode()
+
+    with httpx.Client(timeout=15.0) as client:
+        response = client.post(
+            "https://accounts.spotify.com/api/token",
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        response.raise_for_status()
+        token_data = response.json()
+
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise ValueError("Spotify token refresh returned an empty access_token")
+
+    expires_in = int(token_data.get("expires_in", 3600))
+    connector.encrypted_access_token = new_access_token
+    connector.token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    new_refresh = token_data.get("refresh_token")
+    if new_refresh:
+        connector.encrypted_refresh_token = new_refresh
+    db.commit()
+
+
+def _maybe_refresh_google_token(db: Any, connector: Connector) -> None:
+    """Refresh Google OAuth access token when expired or close to expiring."""
+    settings = get_settings()
+    if not settings.google_client_id or not settings.google_client_secret:
+        return
+
+    if connector.token_expires_at is None:
+        return
+
+    expiry = connector.token_expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    if expiry > datetime.now(UTC) + timedelta(minutes=5):
+        return
+
+    refresh_token = connector.encrypted_refresh_token
+    if not refresh_token:
+        raise ValueError("Google access token expired and no refresh token is stored")
+
+    with httpx.Client(timeout=15.0) as client:
+        response = client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        token_data = response.json()
+
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise ValueError("Google token refresh returned an empty access_token")
+
+    expires_in = int(token_data.get("expires_in", 3600))
+    connector.encrypted_access_token = new_access_token
+    connector.token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    db.commit()
 
 
 def _resolve_tokens(connector: Connector) -> dict[str, str | None]:
@@ -147,6 +253,8 @@ def _fetch_platform_records(
         return _fetch_gcal_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "notion":
         return _fetch_notion_records(access_token=access_token, source_cursor=source_cursor)
+    if platform == "slack":
+        return _fetch_slack_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "spotify":
         return _fetch_spotify_records(access_token=access_token, source_cursor=source_cursor)
     if platform == "whatsapp":
@@ -234,12 +342,115 @@ def _fetch_notion_records(access_token: str, source_cursor: str | None) -> tuple
         headers={"Notion-Version": NOTION_VERSION},
     )
     rows = payload.get("results") if isinstance(payload.get("results"), list) else []
+    notion_rows = [row for row in rows if isinstance(row, dict)]
+
+    # Enrich top-level pages with block text and expand databases into recent rows.
+    enriched_rows = _enrich_notion_rows(access_token=access_token, rows=notion_rows)
+
     next_cursor = _extract_next_cursor(payload, source_cursor)
-    return [row for row in rows if isinstance(row, dict)], next_cursor
+    return enriched_rows, next_cursor
+
+
+def _enrich_notion_rows(access_token: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    page_count = 0
+    database_count = 0
+
+    for row in rows:
+        object_type = row.get("object")
+        if object_type == "page":
+            if page_count < NOTION_MAX_PAGE_ENRICH:
+                page_id = row.get("id")
+                if isinstance(page_id, str) and page_id:
+                    row = dict(row)
+                    row["plain_text"] = _fetch_notion_page_plain_text(access_token=access_token, page_id=page_id)
+                page_count += 1
+            enriched.append(row)
+            continue
+
+        if object_type == "database":
+            enriched.append(row)
+            if database_count < NOTION_MAX_DATABASES:
+                database_id = row.get("id")
+                if isinstance(database_id, str) and database_id:
+                    enriched.extend(
+                        _fetch_notion_database_rows(access_token=access_token, database_id=database_id)
+                    )
+                database_count += 1
+            continue
+
+        enriched.append(row)
+
+    return enriched
+
+
+def _fetch_notion_page_plain_text(access_token: str, page_id: str) -> str:
+    try:
+        payload = _http_get_json(
+            url=f"https://api.notion.com/v1/blocks/{page_id}/children",
+            access_token=access_token,
+            params={"page_size": 100},
+            headers={"Notion-Version": NOTION_VERSION},
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+    blocks = payload.get("results") if isinstance(payload.get("results"), list) else []
+    return _extract_notion_plain_text(blocks)
+
+
+def _fetch_notion_database_rows(access_token: str, database_id: str) -> list[dict[str, Any]]:
+    try:
+        payload = _http_post_json(
+            url=f"https://api.notion.com/v1/databases/{database_id}/query",
+            access_token=access_token,
+            json_body={"page_size": NOTION_MAX_DATABASE_ROWS},
+            headers={"Notion-Version": NOTION_VERSION},
+        )
+    except Exception:  # noqa: BLE001
+        return []
+
+    results = payload.get("results") if isinstance(payload.get("results"), list) else []
+    rows: list[dict[str, Any]] = []
+    for page in results:
+        if not isinstance(page, dict):
+            continue
+        page_id = page.get("id")
+        row = dict(page)
+        if isinstance(page_id, str) and page_id:
+            row["plain_text"] = _fetch_notion_page_plain_text(access_token=access_token, page_id=page_id)
+            row["database_id"] = database_id
+        rows.append(row)
+    return rows
+
+
+def _extract_notion_plain_text(blocks: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if not isinstance(block_type, str):
+            continue
+        payload = block.get(block_type)
+        if not isinstance(payload, dict):
+            continue
+        rich_text = payload.get("rich_text") if isinstance(payload.get("rich_text"), list) else []
+        text_parts: list[str] = []
+        for token in rich_text:
+            if not isinstance(token, dict):
+                continue
+            plain = token.get("plain_text")
+            if isinstance(plain, str) and plain.strip():
+                text_parts.append(plain.strip())
+        if text_parts:
+            lines.append(" ".join(text_parts))
+    return "\n".join(lines)
 
 
 def _fetch_spotify_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
-    params: dict[str, Any] = {"limit": 25}
+    # Fetch recently-played (cursor-based, incremental).
+    params: dict[str, Any] = {"limit": 50}
     if source_cursor:
         params["after"] = source_cursor
 
@@ -248,9 +459,109 @@ def _fetch_spotify_records(access_token: str, source_cursor: str | None) -> tupl
         access_token=access_token,
         params=params,
     )
-    rows = payload.get("items") if isinstance(payload.get("items"), list) else []
-    next_cursor = _extract_next_cursor(payload, source_cursor)
-    return [row for row in rows if isinstance(row, dict)], next_cursor
+    rp_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    rp_rows = [
+        dict(row, _record_type="recently_played")
+        for row in rp_items
+        if isinstance(row, dict)
+    ]
+
+    # Advance cursor: cursors.after is the timestamp of the newest track in the batch.
+    cursors = payload.get("cursors")
+    next_cursor = (
+        str(cursors["after"])
+        if isinstance(cursors, dict) and cursors.get("after")
+        else _extract_next_cursor(payload, source_cursor)
+    )
+
+    # Fetch liked/saved songs as well (first 50, best-effort).
+    liked_rows: list[dict[str, Any]] = []
+    try:
+        liked_payload = _http_get_json(
+            url="https://api.spotify.com/v1/me/tracks",
+            access_token=access_token,
+            params={"limit": 50, "offset": 0},
+        )
+        liked_items = liked_payload.get("items") if isinstance(liked_payload.get("items"), list) else []
+        liked_rows = [
+            dict(item, _record_type="liked")
+            for item in liked_items
+            if isinstance(item, dict)
+        ]
+    except Exception:  # noqa: BLE001 — liked songs fetch is non-critical
+        pass
+
+    return rp_rows + liked_rows, next_cursor
+
+
+def _fetch_slack_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
+    cursor_state = _parse_slack_cursor(source_cursor)
+    latest_ts = _normalize_slack_ts(cursor_state.get("latest_ts"))
+
+    conversations_payload = _ensure_slack_ok(
+        _http_get_json(
+            url="https://slack.com/api/conversations.list",
+            access_token=access_token,
+            params={
+                "limit": 100,
+                "types": "public_channel,private_channel,im,mpim",
+                "exclude_archived": "true",
+            },
+        ),
+        url="https://slack.com/api/conversations.list",
+    )
+    conversations = conversations_payload.get("channels") if isinstance(conversations_payload.get("channels"), list) else []
+
+    user_cache: dict[str, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    newest_ts = latest_ts
+
+    for conversation in conversations[:25]:
+        if not isinstance(conversation, dict):
+            continue
+        channel_id = conversation.get("id")
+        if not isinstance(channel_id, str) or not channel_id:
+            continue
+
+        params: dict[str, Any] = {"channel": channel_id, "limit": 20}
+        if latest_ts:
+            params["oldest"] = latest_ts
+
+        history_payload = _ensure_slack_ok(
+            _http_get_json(
+                url="https://slack.com/api/conversations.history",
+                access_token=access_token,
+                params=params,
+            ),
+            url="https://slack.com/api/conversations.history",
+        )
+        messages = history_payload.get("messages") if isinstance(history_payload.get("messages"), list) else []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if message.get("type") != "message" or message.get("hidden") is True:
+                continue
+
+            user_id = message.get("user") if isinstance(message.get("user"), str) else None
+            profile = _fetch_slack_user_profile(access_token=access_token, user_id=user_id, cache=user_cache)
+            enriched = dict(message)
+            enriched["_channel"] = {
+                "id": channel_id,
+                "name": conversation.get("name"),
+                "is_im": conversation.get("is_im"),
+                "is_private": conversation.get("is_private"),
+                "is_mpim": conversation.get("is_mpim"),
+            }
+            if profile:
+                enriched["_user_profile"] = profile
+            rows.append(enriched)
+
+            message_ts = _normalize_slack_ts(message.get("ts"))
+            if message_ts and (not newest_ts or float(message_ts) > float(newest_ts)):
+                newest_ts = message_ts
+
+    next_cursor_payload = {"latest_ts": newest_ts or latest_ts or "0"}
+    return rows, json.dumps(next_cursor_payload, sort_keys=True)
 
 
 def _fetch_whatsapp_records(
@@ -275,6 +586,68 @@ def _fetch_whatsapp_records(
     rows = _extract_first_record_list(payload)
     next_cursor = _extract_next_cursor(payload, source_cursor)
     return rows, next_cursor
+
+
+def _parse_slack_cursor(source_cursor: str | None) -> dict[str, str]:
+    if source_cursor is None or source_cursor.strip() in {"", "0"}:
+        return {}
+    try:
+        payload = json.loads(source_cursor)
+    except json.JSONDecodeError:
+        return {"latest_ts": source_cursor}
+    if not isinstance(payload, dict):
+        return {}
+    latest_ts = payload.get("latest_ts")
+    return {"latest_ts": str(latest_ts)} if latest_ts else {}
+
+
+def _normalize_slack_ts(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _fetch_slack_user_profile(access_token: str, user_id: str | None, cache: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    if not user_id:
+        return None
+    if user_id in cache:
+        return cache[user_id]
+
+    try:
+        payload = _ensure_slack_ok(
+            _http_get_json(
+                url="https://slack.com/api/users.info",
+                access_token=access_token,
+                params={"user": user_id},
+            ),
+            url="https://slack.com/api/users.info",
+        )
+    except Exception:  # noqa: BLE001
+        cache[user_id] = {}
+        return None
+
+    user_payload = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    profile = user_payload.get("profile") if isinstance(user_payload.get("profile"), dict) else {}
+    cached_profile = {
+        "id": user_id,
+        "name": user_payload.get("real_name") or user_payload.get("name"),
+        "display_name": profile.get("display_name") or profile.get("real_name"),
+        "email": profile.get("email"),
+    }
+    cache[user_id] = cached_profile
+    return cached_profile
+
+
+def _ensure_slack_ok(payload: dict[str, Any], url: str) -> dict[str, Any]:
+    if payload.get("ok") is False:
+        error_code = payload.get("error") or "unknown_error"
+        raise ValueError(f"Slack API error from {url}: {error_code}")
+    return payload
 
 
 def _normalize_records(platform: str, raw_records: list[dict[str, Any]]) -> list[NormalizedItem]:
@@ -421,11 +794,41 @@ def _extract_first_record_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _enqueue_indexing_tasks(item_ids: list[uuid.UUID], user_id: uuid.UUID, source: str) -> None:
+    if not item_ids:
+        return
+
+    try:
+        from workers.celery_app import celery_app
+
+        for item_id in item_ids:
+            celery_app.send_task(
+                "workers.file_watcher_worker.watch_file_changes",
+                args=[str(item_id), str(user_id), source],
+            )
+    except Exception:
+        logger.exception("Unable to enqueue post-ingest indexing tasks")
+
+
 def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:
     if not rows:
         return []
 
     stmt = insert(Item).values(rows)
+    metadata_without_runtime = _metadata_without_runtime_fields
+    change_predicates = [
+        Item.type.is_distinct_from(stmt.excluded.type),
+        Item.title.is_distinct_from(stmt.excluded.title),
+        Item.sender_name.is_distinct_from(stmt.excluded.sender_name),
+        Item.sender_email.is_distinct_from(stmt.excluded.sender_email),
+        Item.content.is_distinct_from(stmt.excluded.content),
+        Item.summary.is_distinct_from(stmt.excluded.summary),
+        Item.item_date.is_distinct_from(stmt.excluded.item_date),
+        Item.file_path.is_distinct_from(stmt.excluded.file_path),
+        metadata_without_runtime(Item.metadata_json).is_distinct_from(
+            metadata_without_runtime(stmt.excluded.metadata)
+        ),
+    ]
     upsert_stmt = stmt.on_conflict_do_update(
         index_elements=[Item.user_id, Item.source, Item.source_id],
         set_={
@@ -440,10 +843,16 @@ def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:
             "file_path": stmt.excluded.file_path,
             "updated_at": datetime.now(UTC),
         },
+        where=or_(*change_predicates),
     ).returning(Item.id)
 
     result = db.execute(upsert_stmt)
     return list(result.scalars().all())
+
+
+def _metadata_without_runtime_fields(expr):
+    """Ignore ingestion/runtime keys that should not trigger re-embedding."""
+    return expr.op("-")("cursor").op("-")("embedding_status").op("-")("embedded_at").op("-")("chunk_count")
 
 
 def _mark_sync_started(connector_id: uuid.UUID, user_id: uuid.UUID) -> None:

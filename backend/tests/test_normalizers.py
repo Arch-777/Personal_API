@@ -7,6 +7,7 @@ from normalizer.drive import DriveNormalizer
 from normalizer.gcal import GCalNormalizer
 from normalizer.gmail import GmailNormalizer
 from normalizer.notion import NotionNormalizer
+from normalizer.slack import SlackNormalizer
 from normalizer.spotify import SpotifyNormalizer
 from normalizer.whatsapp import WhatsAppNormalizer
 from workers import connector_sync
@@ -120,21 +121,81 @@ def test_notion_normalizer_extracts_title_from_properties():
 def test_spotify_normalizer_maps_track_and_artists():
 	normalizer = SpotifyNormalizer()
 	row = {
+		"liked": True,
+		"top_rank": 3,
 		"played_at": "2026-03-13T08:00:00Z",
 		"track": {
 			"id": "trk-1",
 			"name": "Morning Light",
 			"artists": [{"name": "Artist A"}, {"name": "Artist B"}],
+			"popularity": 88,
 			"album": {"name": "Sunrise"},
 		},
 	}
 
 	item = normalizer.normalize_record(row)
 	assert item is not None
-	assert item.type == "media"
+	assert item.type == "track"
 	assert item.title == "Morning Light"
 	assert item.sender_name == "Artist A, Artist B"
 	assert item.metadata_json["album"] == "Sunrise"
+	assert item.metadata_json["track_id"] == "trk-1"
+	assert item.metadata_json["liked"] is True
+	assert item.metadata_json["top_rank"] == 3
+
+
+def test_slack_normalizer_maps_message_channel_and_sender_profile():
+	normalizer = SlackNormalizer()
+	row = {
+		"ts": "1710000000.123",
+		"text": "Daily standup notes",
+		"user": "U123",
+		"thread_ts": "1710000000.123",
+		"_channel": {"id": "C123", "name": "engineering", "is_private": False, "is_im": False, "is_mpim": False},
+		"_user_profile": {"id": "U123", "display_name": "Nisha", "email": "nisha@example.com"},
+	}
+
+	item = normalizer.normalize_record(row)
+
+	assert item is not None
+	assert item.type == "message"
+	assert item.source == "slack"
+	assert item.source_id == "C123:1710000000.123"
+	assert item.sender_name == "Nisha"
+	assert item.sender_email == "nisha@example.com"
+	assert item.metadata_json["channel_name"] == "engineering"
+	assert item.metadata_json["thread_ts"] == "1710000000.123"
+
+
+def test_fetch_slack_records_collects_messages_and_advances_cursor(monkeypatch):
+	payloads = {
+		"https://slack.com/api/conversations.list": {
+			"ok": True,
+			"channels": [{"id": "C123", "name": "engineering", "is_private": False, "is_im": False, "is_mpim": False}],
+		},
+		"https://slack.com/api/conversations.history": {
+			"ok": True,
+			"messages": [{"type": "message", "ts": "1710000000.123", "text": "Deploy done", "user": "U123"}],
+		},
+		"https://slack.com/api/users.info": {
+			"ok": True,
+			"user": {
+				"name": "nisha",
+				"profile": {"display_name": "Nisha", "email": "nisha@example.com"},
+			},
+		},
+	}
+
+	def fake_get(url, access_token, params=None, headers=None):
+		return payloads[url]
+
+	monkeypatch.setattr(connector_sync, "_http_get_json", fake_get)
+	rows, next_cursor = connector_sync._fetch_slack_records(access_token="token", source_cursor="0")
+
+	assert len(rows) == 1
+	assert rows[0]["_channel"]["id"] == "C123"
+	assert rows[0]["_user_profile"]["email"] == "nisha@example.com"
+	assert json.loads(next_cursor)["latest_ts"] == "1710000000.123"
 
 
 def test_fetch_platform_records_uses_seeded_metadata_records_without_http():
@@ -212,4 +273,38 @@ def test_persist_normalized_items_adds_connector_metadata(monkeypatch):
 	assert row["metadata_json"]["ingestion_mode"] == "api"
 	assert row["metadata_json"]["cursor"] == "7"
 	assert row["metadata_json"]["connector_id"] == str(connector.id)
+
+
+def test_extract_notion_plain_text_joins_rich_text_lines():
+	blocks = [
+		{
+			"type": "paragraph",
+			"paragraph": {
+				"rich_text": [
+					{"plain_text": "Line one"},
+					{"plain_text": "part two"},
+				],
+			},
+		},
+		{
+			"type": "heading_1",
+			"heading_1": {
+				"rich_text": [{"plain_text": "Header"}],
+			},
+		},
+	]
+
+	text = connector_sync._extract_notion_plain_text(blocks)
+
+	assert text == "Line one part two\nHeader"
+
+
+def test_fetch_notion_database_rows_returns_empty_on_http_error(monkeypatch):
+	def _raise(*_args, **_kwargs):
+		raise ValueError("boom")
+
+	monkeypatch.setattr(connector_sync, "_http_post_json", _raise)
+	rows = connector_sync._fetch_notion_database_rows(access_token="token", database_id="db-1")
+
+	assert rows == []
 
