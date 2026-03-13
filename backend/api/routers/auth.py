@@ -2,7 +2,7 @@ import secrets
 import urllib.parse
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,18 +16,44 @@ from api.schemas.auth import GoogleLoginRequest, LoginRequest, RegisterRequest, 
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+DEFAULT_GOOGLE_AUTH_REDIRECT_URI = "http://127.0.0.1:8000/auth/google/callback"
+
+
+def _google_config_error_detail(settings) -> str:
+	missing = []
+	if not settings.google_client_id:
+		missing.append("GOOGLE_CLIENT_ID")
+	if not settings.google_client_secret:
+		missing.append("GOOGLE_CLIENT_SECRET")
+	if not missing:
+		return "Google login is not configured"
+	return f"Google login is not configured. Missing: {', '.join(missing)}"
+
+
+def _resolve_google_auth_redirect_uri(request: Request) -> str:
+	settings = get_settings()
+	configured = settings.google_auth_redirect_uri.strip()
+	if configured and configured != DEFAULT_GOOGLE_AUTH_REDIRECT_URI:
+		return configured
+	return str(request.url_for("google_auth_callback"))
 
 
 @router.get("/google/connect")
-def google_auth_connect() -> dict[str, str]:
+def google_auth_connect(request: Request) -> dict[str, str]:
 	settings = get_settings()
 	if not settings.google_client_id or not settings.google_client_secret:
-		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google login is not configured")
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_google_config_error_detail(settings))
 
-	state = create_access_token("google-auth", expires_minutes=10)
+	redirect_uri = _resolve_google_auth_redirect_uri(request)
+
+	state = create_access_token(
+		"google-auth",
+		expires_minutes=10,
+		extra_claims={"google_redirect_uri": redirect_uri},
+	)
 	params = {
 		"client_id": settings.google_client_id,
-		"redirect_uri": settings.google_auth_redirect_uri,
+		"redirect_uri": redirect_uri,
 		"response_type": "code",
 		"scope": "openid email profile",
 		"access_type": "offline",
@@ -41,7 +67,7 @@ def google_auth_connect() -> dict[str, str]:
 def google_auth_callback(code: str, state: str, db: Session = Depends(get_db)) -> TokenResponse:
 	settings = get_settings()
 	if not settings.google_client_id or not settings.google_client_secret:
-		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google login is not configured")
+		raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_google_config_error_detail(settings))
 
 	try:
 		payload = verify_google_oauth_state(state)
@@ -49,6 +75,8 @@ def google_auth_callback(code: str, state: str, db: Session = Depends(get_db)) -
 			raise ValueError("Invalid state subject")
 	except ValueError as exc:
 		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired state parameter") from exc
+
+	redirect_uri = str(payload.get("google_redirect_uri") or settings.google_auth_redirect_uri)
 
 	try:
 		with httpx.Client(timeout=15.0) as client:
@@ -59,7 +87,7 @@ def google_auth_callback(code: str, state: str, db: Session = Depends(get_db)) -
 					"client_secret": settings.google_client_secret,
 					"code": code,
 					"grant_type": "authorization_code",
-					"redirect_uri": settings.google_auth_redirect_uri,
+					"redirect_uri": redirect_uri,
 				},
 				headers={"Content-Type": "application/x-www-form-urlencoded"},
 			)
