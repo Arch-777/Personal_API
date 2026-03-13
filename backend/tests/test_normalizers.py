@@ -256,6 +256,23 @@ def test_fetch_gcal_records_recovers_when_sync_token_is_expired(monkeypatch):
 	assert state["updated_after"] == "2026-03-14T11:00:00Z"
 
 
+def test_fetch_notion_records_ignores_zero_cursor_and_returns_empty_next_cursor(monkeypatch):
+	requests: list[dict[str, object]] = []
+
+	def fake_post(url, access_token, json_body=None, headers=None):
+		requests.append({"url": url, "json_body": dict(json_body or {})})
+		return {"results": [{"object": "page", "id": "page-1"}], "next_cursor": None}
+
+	monkeypatch.setattr(connector_sync, "_http_post_json", fake_post)
+	monkeypatch.setattr(connector_sync, "_enrich_notion_rows", lambda access_token, rows: rows)
+
+	rows, next_cursor = connector_sync._fetch_notion_records(access_token="token", source_cursor="0")
+
+	assert len(rows) == 1
+	assert requests[0]["json_body"] == {"page_size": 25}
+	assert next_cursor == ""
+
+
 def test_fetch_platform_records_uses_seeded_metadata_records_without_http():
 	connector = SimpleNamespace(
 		metadata_json={

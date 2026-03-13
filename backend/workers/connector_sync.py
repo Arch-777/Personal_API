@@ -487,7 +487,7 @@ def _fetch_gcal_records(access_token: str, source_cursor: str | None) -> tuple[l
 
 def _fetch_notion_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
     body: dict[str, Any] = {"page_size": 25}
-    if source_cursor:
+    if _has_cursor_value(source_cursor):
         body["start_cursor"] = source_cursor
 
     payload = _http_post_json(
@@ -503,6 +503,8 @@ def _fetch_notion_records(access_token: str, source_cursor: str | None) -> tuple
     enriched_rows = _enrich_notion_rows(access_token=access_token, rows=notion_rows)
 
     next_cursor = _extract_next_cursor(payload, source_cursor)
+    if next_cursor == "0":
+        next_cursor = ""
     return enriched_rows, next_cursor
 
 

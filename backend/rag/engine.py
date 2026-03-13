@@ -68,17 +68,31 @@ class RAGEngine:
 
 		built: BuiltContext = self.context_builder.build(normalized_query, retrieved, include_debug=include_debug)
 		answer = self.context_builder.compose_answer(normalized_query, retrieved)
+		answer_mode = "deterministic"
 
 		if self.use_llm and self.generator is not None:
 			try:
 				answer = self.generator.generate(query=normalized_query, context_text=built.context_text)
+				answer_mode = "llm"
 			except Exception:
 				logger.exception("LLM generation failed; falling back to deterministic RAG answer")
 				# Fall back to deterministic answer path when local LLM is unavailable.
 				answer = self.context_builder.compose_answer(normalized_query, retrieved)
+				answer_mode = "fallback"
+
+		logger.info(
+			"RAG answer generated",
+			extra={
+				"answer_mode": answer_mode,
+				"use_llm": self.use_llm,
+				"source_count": len(built.sources),
+				"document_count": len(built.documents),
+			},
+		)
 
 		return {
 			"answer": answer,
+			"answer_mode": answer_mode,
 			"sources": built.sources,
 			"documents": built.documents,
 			"file_links": built.file_links,

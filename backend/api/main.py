@@ -2,10 +2,13 @@ from importlib import import_module
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi import status
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.core.db import check_database_connection
 from api.core.config import get_settings
+from rag.generator import check_ollama_readiness
 
 
 settings = get_settings()
@@ -42,6 +45,49 @@ def include_router_if_available(module_path: str, prefix: str = "", tags: list[s
 @app.get("/health")
 def health() -> dict[str, str]:
 	return {"status": "ok"}
+
+
+@app.get("/health/llm")
+def health_llm():
+	current_settings = get_settings()
+	provider = current_settings.rag_llm_provider.strip().lower()
+	if not current_settings.rag_llm_enabled:
+		return {"status": "disabled", "enabled": False, "provider": provider or "none"}
+
+	if provider != "ollama":
+		return JSONResponse(
+			status_code=status.HTTP_501_NOT_IMPLEMENTED,
+			content={
+				"status": "unsupported_provider",
+				"enabled": True,
+				"provider": provider or "unknown",
+			},
+		)
+
+	ready, detail = check_ollama_readiness(
+		base_url=current_settings.rag_llm_base_url,
+		timeout_seconds=min(current_settings.rag_llm_timeout_seconds, 3),
+	)
+	if ready:
+		return {
+			"status": "ok",
+			"enabled": True,
+			"provider": provider,
+			"base_url": current_settings.rag_llm_base_url,
+			"model": current_settings.rag_llm_model,
+		}
+
+	return JSONResponse(
+		status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+		content={
+			"status": "unreachable",
+			"enabled": True,
+			"provider": provider,
+			"base_url": current_settings.rag_llm_base_url,
+			"model": current_settings.rag_llm_model,
+			"detail": detail,
+		},
+	)
 
 
 include_router_if_available("api.routers.auth")

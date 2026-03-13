@@ -533,6 +533,39 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Ensure deployed backend environment sets `FRONTEND_APP_URL` to the real frontend domain.
 
+## Step 31 - Notion Sync Invalid Cursor Fix
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Updated Notion search fetcher to ignore sentinel cursor value `0` instead of sending it as `start_cursor`.
+    - Normalized empty Notion pagination state to `""` instead of persisting `"0"`, preventing follow-up `/v1/search` 400 errors.
+  - backend/tests/test_normalizers.py:
+    - Added regression test covering zero-cursor handling for Notion sync.
+- Verification:
+  - Targeted tests passed: `py -3 -m pytest tests/test_normalizers.py -q` -> 16 passed.
+- Next:
+  - Redeploy notion worker and retry `workers.notion_worker.sync_notion`.
+
+## Step 32 - Ollama RAG Health Check + Answer Mode Observability
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/generator.py:
+    - Added `check_ollama_readiness()` helper that probes Ollama `/api/tags` for health-style readiness checks.
+  - backend/api/main.py:
+    - Added `GET /health/llm` endpoint.
+    - Keeps primary `/health` unchanged, while exposing dedicated LLM readiness states: `disabled`, `ok`, `unreachable`, `unsupported_provider`.
+  - backend/rag/engine.py:
+    - Added `answer_mode` metadata to RAG results (`deterministic`, `llm`, `fallback`).
+    - Added structured logging for answer mode and retrieval/result counts so production can tell when Ollama was used versus fallback.
+  - backend/tests/test_api.py, backend/tests/test_rag.py:
+    - Added coverage for `/health/llm` states and RAG `answer_mode` behavior.
+- Verification:
+  - Targeted tests passed: `py -3 -m pytest tests/test_api.py tests/test_rag.py -q` -> 31 passed.
+- Next:
+  - After setting RAG env vars in production, call `/health/llm` to verify Ollama connectivity before relying on LLM-backed chat answers.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract

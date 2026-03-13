@@ -600,7 +600,39 @@ def test_rag_engine_uses_llm_generator_when_enabled():
 	result = engine.query("Explain architecture", top_k=5)
 
 	assert result["answer"] == "LLM synthesized answer"
+	assert result["answer_mode"] == "llm"
 	assert len(result["sources"]) == 1
+
+
+def test_rag_engine_returns_fallback_answer_mode_when_llm_fails():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Architecture",
+			summary="Architecture summary",
+			content="System has API, workers and retrieval components",
+			metadata_json={"file_path": "/users/u/data/notion/architecture.json"},
+			item_date=now,
+			file_path="/users/u/data/notion/architecture.json",
+			embedding=None,
+			created_at=now,
+		)
+	]
+
+	class _BrokenGenerator:
+		def generate(self, query: str, context_text: str) -> str:
+			raise RuntimeError("ollama unavailable")
+
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=_BrokenGenerator(), use_llm=True)
+	result = engine.query("Explain architecture", top_k=5)
+
+	assert result["answer_mode"] == "fallback"
+	assert isinstance(result["answer"], str)
+	assert result["answer"]
 
 
 class FakeChatDb:

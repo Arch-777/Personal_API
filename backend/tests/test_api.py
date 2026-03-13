@@ -91,6 +91,75 @@ def test_health_endpoint_returns_ok():
 	assert response.json() == {"status": "ok"}
 
 
+def test_llm_health_endpoint_returns_disabled_when_llm_is_off(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(
+		api_main,
+		"get_settings",
+		lambda: SimpleNamespace(
+			rag_llm_enabled=False,
+			rag_llm_provider="ollama",
+			rag_llm_base_url="http://127.0.0.1:11434",
+			rag_llm_model="qwen2.5:1.5b",
+			rag_llm_timeout_seconds=45,
+		),
+	)
+
+	client = TestClient(app)
+	response = client.get("/health/llm")
+
+	assert response.status_code == 200
+	assert response.json()["status"] == "disabled"
+
+
+def test_llm_health_endpoint_returns_ok_when_ollama_is_ready(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(
+		api_main,
+		"get_settings",
+		lambda: SimpleNamespace(
+			rag_llm_enabled=True,
+			rag_llm_provider="ollama",
+			rag_llm_base_url="http://127.0.0.1:11434",
+			rag_llm_model="qwen2.5:1.5b",
+			rag_llm_timeout_seconds=45,
+		),
+	)
+	monkeypatch.setattr(api_main, "check_ollama_readiness", lambda base_url, timeout_seconds=3: (True, "ok"))
+
+	client = TestClient(app)
+	response = client.get("/health/llm")
+
+	assert response.status_code == 200
+	assert response.json()["status"] == "ok"
+	assert response.json()["model"] == "qwen2.5:1.5b"
+
+
+def test_llm_health_endpoint_returns_503_when_ollama_is_unreachable(monkeypatch):
+	from api import main as api_main
+
+	monkeypatch.setattr(
+		api_main,
+		"get_settings",
+		lambda: SimpleNamespace(
+			rag_llm_enabled=True,
+			rag_llm_provider="ollama",
+			rag_llm_base_url="http://10.0.0.5:11434",
+			rag_llm_model="qwen2.5:1.5b",
+			rag_llm_timeout_seconds=45,
+		),
+	)
+	monkeypatch.setattr(api_main, "check_ollama_readiness", lambda base_url, timeout_seconds=3: (False, "connection refused"))
+
+	client = TestClient(app)
+	response = client.get("/health/llm")
+
+	assert response.status_code == 503
+	assert response.json()["status"] == "unreachable"
+
+
 def test_emails_endpoint_returns_paginated_items():
 	fake_db = FakeDb()
 	fake_db.next_scalar = 1
