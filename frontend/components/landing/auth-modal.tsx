@@ -69,9 +69,7 @@ function PasswordStrength({ password }: { password: string }) {
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
-          className={`h-1 flex-1 rounded-full transition-all ${
-            i < strength ? colors[strength] : "bg-white/10"
-          }`}
+          className={`h-1 flex-1 rounded-full transition-all ${i < strength ? colors[strength] : "bg-white/10"}`}
         />
       ))}
     </div>
@@ -116,7 +114,7 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    
+
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const email = formData.get("email") as string;
     const name = formData.get("name") as string;
@@ -136,7 +134,6 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
   };
 
   const isLogin = type === "login";
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md border-border bg-background">

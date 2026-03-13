@@ -70,7 +70,8 @@
 .animate-slide-up *,
 .animate-shimmer,
 .reveal,
-.reveal * {
+.reveal *,
+.animated-line {
   transition:
     background-color 0.35s ease,
     border-color 0.35s ease,
@@ -188,10 +189,14 @@
 /* ===================== */
 @keyframes marquee {
   from { transform: translateX(0); }
-  to   { transform: translateX(-50%); }
+  to   { transform: translateX(-33.333%); }
 }
-.animate-marquee { animation: marquee 25s linear infinite; }
-.animate-marquee:hover { animation-play-state: paused; }
+.animate-marquee {
+  animation: marquee 60s linear infinite;
+}
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
 
 /* ===================== */
 /* Badge Shimmer Border  */
@@ -210,6 +215,96 @@
   50%       { transform: translateY(-8px) rotate(0deg); }
 }
 .animate-float { animation: float 4s ease-in-out infinite; }
+
+/* ======================================= */
+/* Animated Vertical Blue Light Beams      */
+/* (Exact reference implementation)        */
+/* ======================================= */
+
+.animated-line {
+  position: absolute;
+  top: 0;
+  width: 4px;
+  height: 100%;
+
+  /* Vertical gradient: transparent → bright blue center → transparent */
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(14, 165, 233, 0) 15%,
+    rgba(14, 165, 233, 0.9) 50%,
+    rgba(14, 165, 233, 0) 85%,
+    transparent 100%
+  );
+
+  /* Soft blur to diffuse the beam */
+  filter: blur(4px);
+
+  /* Triple-layer glow bloom */
+  box-shadow:
+    0 0 40px rgba(14, 165, 233, 0.9),
+    0 0 80px rgba(14, 165, 233, 0.6),
+    0 0 120px rgba(14, 165, 233, 0.3);
+
+  animation: moveLine 12s ease-in-out infinite;
+  z-index: 5;
+}
+
+@keyframes moveLine {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  5% {
+    opacity: 1;
+  }
+  95% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+/* Light mode: tone down the beams significantly */
+:root .animated-line {
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(14, 165, 233, 0) 15%,
+    rgba(14, 165, 233, 0.35) 50%,
+    rgba(14, 165, 233, 0) 85%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 20px rgba(14, 165, 233, 0.3),
+    0 0 40px rgba(14, 165, 233, 0.15),
+    0 0 60px rgba(14, 165, 233, 0.08);
+  filter: blur(6px);
+}
+
+/* Dark mode: full intensity */
+.dark .animated-line {
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(14, 165, 233, 0) 15%,
+    rgba(14, 165, 233, 0.9) 50%,
+    rgba(14, 165, 233, 0) 85%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 40px rgba(14, 165, 233, 0.9),
+    0 0 80px rgba(14, 165, 233, 0.6),
+    0 0 120px rgba(14, 165, 233, 0.3);
+  filter: blur(4px);
+}
+
+/* Exclude from global theme transition rule */
+.animated-line {
+  transition: none !important;
+}
 
 /* ===================== */
 /* Hero Glow Background  */
@@ -246,4 +341,24 @@
 
 .dark .noise-bg {
   background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.4) 1px, transparent 0);
+}
+
+/* Feature card mini-preview — exclude from global color transition */
+.feature-preview,
+.feature-preview * {
+  transition: none !important;
+}
+
+/* Reverse marquee row — slightly slower for depth parallax feel */
+.animate-marquee[style*="reverse"] {
+  animation-duration: 35s;
+}
+
+/* Exclude marquee from global theme color transition to stop flicker */
+.animate-marquee,
+.animate-marquee * {
+  transition:
+    background-color 0.35s ease,
+    border-color 0.35s ease,
+    color 0.25s ease !important;
 }

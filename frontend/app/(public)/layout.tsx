@@ -26,6 +26,16 @@ export default function PublicLayout({
 
   return (
     <div className="relative flex flex-col min-h-screen">
+      {/* ─── Animated vertical light beams ─── */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        {/* Left beam — starts immediately */}
+        <div className="animated-line" style={{ left: '15%', animationDelay: '0s' }} />
+        {/* Center beam — starts after 4s */}
+        <div className="animated-line" style={{ left: '45%', animationDelay: '4s' }} />
+        {/* Right beam — starts after 8s */}
+        <div className="animated-line" style={{ left: '75%', animationDelay: '8s' }} />
+      </div>
+
       {/* Noise dots + glow — limited to hero/navbar region only */}
       <div
         className="absolute top-0 left-0 right-0 pointer-events-none"

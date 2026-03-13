@@ -4,7 +4,6 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { HeroSection } from "@/components/landing/hero-section";
 import { FeaturesSection } from "@/components/landing/features-section";
-import { IntegrationsCarousel } from "@/components/landing/integrations-carousel";
 import { PricingSection } from "@/components/landing/pricing-section";
 import { Footer } from "@/components/landing/footer";
 import { AuthModal } from "@/components/landing/auth-modal";
@@ -21,8 +20,6 @@ function LandingPageContent() {
       <HeroSection />
       <Separator className="opacity-10" />
       <FeaturesSection />
-      <Separator className="opacity-10" />
-      <IntegrationsCarousel />
       <Separator className="opacity-10" />
       <PricingSection />
       <Footer />
