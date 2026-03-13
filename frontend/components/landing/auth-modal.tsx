@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { GoogleLogin } from "@react-oauth/google";
 import {
   Dialog,
   DialogContent,
@@ -15,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Alert } from "@/components/ui/alert";
+import { useGoogleAuth } from "@/hooks/use-auth";
 
 function GoogleIcon() {
   return (
@@ -86,6 +88,7 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [password, setPassword] = useState("");
+  const googleAuth = useGoogleAuth(() => router.push("/dashboard"));
 
   const handleOpenChange = (v: boolean) => {
     if (!v) {
@@ -108,9 +111,7 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md border-border bg-background">
         <DialogHeader>
-          <DialogTitle
-            className="text-xl font-bold text-foreground"
-          >
+          <DialogTitle className="text-xl font-bold text-foreground">
             {isLogin ? "Welcome back" : "Create your account"}
           </DialogTitle>
           <DialogDescription>
@@ -121,21 +122,26 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
         </DialogHeader>
 
         {/* Google button */}
-        <Button
-          variant="outline"
-          className="w-full border-white/20 hover:bg-white/5 cursor-pointer"
-          type="button"
-        >
-          <GoogleIcon />
-          Continue with Google
-        </Button>
+        <div className="flex justify-center">
+          <GoogleLogin
+            onSuccess={(credentialResponse) => {
+              if (credentialResponse.credential) {
+                googleAuth.mutate(credentialResponse.credential);
+              }
+            }}
+            onError={() => setError("Google sign-in failed. Please try again.")}
+            useOneTap={false}
+            text={isLogin ? "signin_with" : "signup_with"}
+            shape="rectangular"
+            theme="filled_black"
+            width="368"
+          />
+        </div>
 
         {/* Divider */}
         <div className="relative flex items-center my-1">
           <Separator className="flex-1 opacity-20" />
-          <span
-            className="px-3 text-xs text-muted-foreground"
-          >
+          <span className="px-3 text-xs text-muted-foreground">
             or continue with email
           </span>
           <Separator className="flex-1 opacity-20" />
