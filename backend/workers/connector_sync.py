@@ -20,6 +20,7 @@ from api.core.db import SessionLocal
 from api.models.connector import Connector
 from api.models.item import Item
 from normalizer.base import BaseNormalizer, NormalizedItem
+from rag.indexer import index_item_chunks
 
 def _broadcast(user_id: str, event: str, data: dict[str, Any]) -> None:
     """Best-effort broadcast to WebSocket clients. Silently skips if unavailable."""
@@ -92,6 +93,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             normalized_items = _normalize_records(platform, raw_records)
             rows = _persist_normalized_items(connector, normalized_items, source_cursor)
             upserted_item_ids = _upsert_items(db, rows)
+            _inline_index_items(db, upserted_item_ids, parsed_user_id)
 
             connector.sync_cursor = next_cursor
             connector.last_synced = datetime.now(UTC)
@@ -808,6 +810,28 @@ def _extract_first_record_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(value, list):
             return [row for row in value if isinstance(row, dict)]
     return []
+
+
+def _inline_index_items(db, item_ids: list[uuid.UUID], user_id: uuid.UUID) -> None:
+    """Chunk and embed upserted items within the current DB session so item_chunks
+    rows are populated synchronously on every sync, even without Celery workers."""
+    if not item_ids:
+        return
+
+    items = db.execute(
+        select(Item).where(Item.id.in_(item_ids), Item.user_id == user_id)
+    ).scalars().all()
+
+    for item in items:
+        try:
+            result = index_item_chunks(db=db, item=item)
+            metadata = dict(item.metadata_json or {})
+            metadata["embedding_status"] = "completed"
+            metadata["embedded_at"] = datetime.now(UTC).isoformat()
+            metadata["chunk_count"] = result.chunk_count
+            item.metadata_json = metadata
+        except Exception:
+            logger.exception("Inline indexing failed for item %s", item.id)
 
 
 def _enqueue_indexing_tasks(item_ids: list[uuid.UUID], user_id: uuid.UUID, source: str) -> None:

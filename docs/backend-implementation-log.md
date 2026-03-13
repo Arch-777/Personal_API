@@ -796,6 +796,22 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Add opt-in debug scoring breakdown in search/chat responses for faster ranking diagnostics during tuning.
 
+## Step 36 - Inline item_chunks Population on Sync
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Added `from rag.indexer import index_item_chunks` import.
+    - Added `_inline_index_items(db, upserted_item_ids, parsed_user_id)` call inside `run_connector_sync`, after `_upsert_items` and before `db.commit()`.
+    - Added `_inline_index_items` helper: batch-loads upserted `Item` objects by ID, calls `index_item_chunks` per item, writes `embedding_status`, `embedded_at`, and `chunk_count` into `item.metadata_json`. Errors per item are caught and logged so a single bad item cannot abort the whole sync.
+- Behaviour:
+  - Every sync now populates `item_chunks` rows synchronously in the same DB transaction, so chunks are available immediately after a sync completes — even without Celery workers running.
+  - If Celery is running, `embed_item` will see `embedding_status == "completed"` and skip (idempotent).
+- Verification:
+  - Visual code review confirmed correct placement (within `with SessionLocal() as db:` block, before commit).
+- Next:
+  - Run a live sync against a connected platform and confirm `item_chunks` rows appear immediately.
+
 ## Step 35 - Postman Debug Requests for Search and Chat
 - Status: Completed
 - Date: 2026-03-14
