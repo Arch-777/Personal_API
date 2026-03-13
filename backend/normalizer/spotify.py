@@ -34,6 +34,17 @@ class SpotifyNormalizer(BaseNormalizer):
 		if isinstance(context, dict):
 			metadata["context_type"] = context.get("type")
 
+		played_at = self.coerce_datetime(played_at_raw)
+		metadata["track_name"] = title
+		metadata["artist_names"] = metadata.get("artists") if isinstance(metadata.get("artists"), list) else []
+		metadata["play_count"] = record.get("play_count") or track.get("play_count")
+		metadata["top_rank"] = record.get("top_rank") or record.get("rank") or track.get("top_rank")
+		metadata["liked"] = bool(
+			record.get("liked") or track.get("liked") or record.get("is_favorite") or record.get("is_saved")
+		)
+		metadata["playlist_names"] = record.get("playlist_names") if isinstance(record.get("playlist_names"), list) else []
+		metadata["played_at"] = played_at.isoformat() if played_at else None
+
 		return NormalizedItem(
 			type=self.item_type,
 			source=self.platform,

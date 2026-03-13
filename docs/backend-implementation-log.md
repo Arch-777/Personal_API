@@ -517,3 +517,39 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Coverage: RAG chunk/embed/retrieve/context/engine behavior, chat endpoint orchestration, and regression checks for workers, normalizers, API routes, and search.
 - Next:
   - Implement Workstream 5 (Realtime + MCP integration): websocket event dispatch for sync/index updates and MCP tool endpoints for user-scoped retrieval.
+
+## Step 15 - Optional Qwen/Ollama LLM Layer for RAG Answers
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/rag/generator.py: Added Ollama generator client for local model inference.
+  - backend/rag/engine.py: Added optional LLM generation path with safe fallback to deterministic answer composition.
+  - backend/api/core/config.py: Added RAG LLM configuration settings (enable flag, provider, base URL, model, timeout, temperature, max tokens).
+  - backend/.env.example: Added environment variables for Ollama + qwen2.5:1.5b integration.
+  - backend/tests/test_rag.py: Added test coverage for engine LLM path when enabled.
+- Verification:
+  - RAG tests passed: 8/8 tests (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_rag.py -v
+  - Local environment check: Ollama installed (0.17.4), qwen2.5:1.5b model not yet pulled.
+- Next:
+  - Pull qwen2.5:1.5b model locally and enable RAG_LLM_ENABLED=true in backend runtime environment.
+
+## Step 16 - Chunk Indexing, Chunk Retrieval, and Intent-Aware Reranking
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/models/item_chunk.py: Added per-chunk storage model with pgvector embedding support.
+  - backend/migrations/002_item_chunks.sql: Added chunk table, full-text index, and vector index migration.
+  - backend/rag/indexer.py: Added reusable chunk indexing pipeline to split item text, generate chunk embeddings, and persist chunk rows.
+  - backend/workers/embedding_worker.py: Replaced placeholder embedding completion with real chunk indexing and aggregate item embedding generation.
+  - backend/workers/connector_sync.py: Added post-ingest indexing task enqueueing for newly upserted items.
+  - backend/rag/retriever.py: Added chunk-candidate retrieval, grouping/deduplication, metadata-aware reranking, and source/domain intent handling for Spotify/email/linkedin style queries.
+  - backend/normalizer/spotify.py: Enriched Spotify metadata with track/favorites/ranking fields and normalized type to track.
+  - backend/tests/test_rag.py: Added regression coverage for favorites-style Spotify retrieval and deduplication.
+  - backend/tests/test_normalizers.py: Updated Spotify normalizer assertions for track metadata.
+- Verification:
+  - Targeted backend regression suites passed: 65/65 tests in 9.63s (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_rag.py tests/test_normalizers.py tests/test_api.py tests/test_search.py tests/test_celery_foundation.py -v
+  - Coverage: chunking logic, deterministic embeddings, LLM path, chunk-aware retriever behavior, favorites/mail intent reranking, connector/api/search regressions, and worker foundation checks.
+- Next:
+  - Apply migration 002_item_chunks.sql to the target database and backfill chunk embeddings for existing items so live chat uses chunk/vector retrieval immediately.

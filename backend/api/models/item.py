@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlalchemy import Computed, DateTime, ForeignKey, Index, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,7 +30,11 @@ class Item(Base):
 	item_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 	file_path: Mapped[str | None] = mapped_column(Text, nullable=True)
 	embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
-	content_tsv: Mapped[str | None] = mapped_column(TSVECTOR, nullable=True)
+	content_tsv: Mapped[str | None] = mapped_column(
+		TSVECTOR,
+		Computed("to_tsvector('english', coalesce(title, '') || ' ' || coalesce(content, ''))", persisted=True),
+		nullable=True,
+	)
 	created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 	updated_at: Mapped[datetime] = mapped_column(
 		DateTime(timezone=True),

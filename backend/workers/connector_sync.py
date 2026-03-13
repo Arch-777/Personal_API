@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass
@@ -39,6 +40,8 @@ NORMALIZERS: dict[str, BaseNormalizer] = {
     "notion": NotionNormalizer(),
     "spotify": SpotifyNormalizer(),
 }
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -81,6 +84,8 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             connector.status = "connected"
             connector.error_message = None
             db.commit()
+
+        _enqueue_indexing_tasks(item_ids=upserted_item_ids, user_id=parsed_user_id, source=platform)
 
         return {
             "status": "completed",
@@ -546,6 +551,22 @@ def _extract_first_record_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(value, list):
             return [row for row in value if isinstance(row, dict)]
     return []
+
+
+def _enqueue_indexing_tasks(item_ids: list[uuid.UUID], user_id: uuid.UUID, source: str) -> None:
+    if not item_ids:
+        return
+
+    try:
+        from workers.celery_app import celery_app
+
+        for item_id in item_ids:
+            celery_app.send_task(
+                "workers.file_watcher_worker.watch_file_changes",
+                args=[str(item_id), str(user_id), source],
+            )
+    except Exception:
+        logger.exception("Unable to enqueue post-ingest indexing tasks")
 
 
 def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:

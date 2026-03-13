@@ -19,6 +19,14 @@ class Settings(BaseSettings):
 	database_connect_timeout: int = Field(default=10)
 	redis_url: str = Field(default="redis://localhost:6379/0")
 
+	rag_llm_enabled: bool = Field(default=False)
+	rag_llm_provider: str = Field(default="ollama")
+	rag_llm_base_url: str = Field(default="http://localhost:11434")
+	rag_llm_model: str = Field(default="qwen2.5:1.5b")
+	rag_llm_timeout_seconds: int = Field(default=45)
+	rag_llm_temperature: float = Field(default=0.2)
+	rag_llm_max_tokens: int = Field(default=512)
+
 	secret_key: str = Field(default="change-me-in-production")
 	access_token_expire_minutes: int = Field(default=60)
 	algorithm: str = Field(default="HS256")

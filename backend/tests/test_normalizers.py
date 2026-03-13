@@ -120,11 +120,14 @@ def test_notion_normalizer_extracts_title_from_properties():
 def test_spotify_normalizer_maps_track_and_artists():
 	normalizer = SpotifyNormalizer()
 	row = {
+		"liked": True,
+		"top_rank": 3,
 		"played_at": "2026-03-13T08:00:00Z",
 		"track": {
 			"id": "trk-1",
 			"name": "Morning Light",
 			"artists": [{"name": "Artist A"}, {"name": "Artist B"}],
+			"popularity": 88,
 			"album": {"name": "Sunrise"},
 		},
 	}
@@ -135,6 +138,9 @@ def test_spotify_normalizer_maps_track_and_artists():
 	assert item.title == "Morning Light"
 	assert item.sender_name == "Artist A, Artist B"
 	assert item.metadata_json["album"] == "Sunrise"
+	assert item.metadata_json["track_id"] == "trk-1"
+	assert item.metadata_json["liked"] is True
+	assert item.metadata_json["top_rank"] == 3
 
 
 def test_fetch_platform_records_uses_seeded_metadata_records_without_http():
