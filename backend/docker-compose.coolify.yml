@@ -13,7 +13,7 @@ services:
 
   api:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -25,7 +25,7 @@ services:
 
   worker-google:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -46,7 +46,7 @@ services:
 
   worker-whatsapp:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -67,7 +67,7 @@ services:
 
   worker-notion:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -88,7 +88,7 @@ services:
 
   worker-spotify:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -109,7 +109,7 @@ services:
 
   worker-slack:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -130,7 +130,7 @@ services:
 
   worker-file-watcher:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -151,7 +151,7 @@ services:
 
   worker-embedding:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
