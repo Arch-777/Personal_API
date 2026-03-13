@@ -7,9 +7,7 @@ import { Button } from "@/components/ui/button";
 export function HeroSection() {
   return (
     <section className="relative min-h-[90vh] flex items-center overflow-hidden">
-      <div className="noise-bg" />
-      {/* Background glow */}
-      <div className="hero-glow absolute inset-0 pointer-events-none" />
+      {/* noise-bg and hero-glow are now rendered at the layout level */}
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-24">
         <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
@@ -57,7 +55,7 @@ export function HeroSection() {
                   size="lg"
                   className="bg-foreground text-background hover:bg-foreground/90 font-semibold px-8 cursor-pointer shadow-lg shadow-foreground/10"
                 >
-                  Get Started Free
+                  Get Started
                 </Button>
               </Link>
             </div>

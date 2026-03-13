@@ -41,7 +41,7 @@ const plans = [
       "RAG AI Chat",
       "Priority support",
     ],
-    cta: "Get Started Free",
+    cta: "Get Started",
     ctaVariant: "default" as const,
     featured: true,
   },

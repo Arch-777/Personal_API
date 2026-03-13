@@ -25,7 +25,19 @@ export default function PublicLayout({
   }, []);
 
   return (
-    <div className="flex flex-col min-h-screen">
+    <div className="relative flex flex-col min-h-screen">
+      {/* Noise dots + glow — limited to hero/navbar region only */}
+      <div
+        className="absolute top-0 left-0 right-0 pointer-events-none"
+        style={{
+          height: "100vh",
+          maskImage: "linear-gradient(to bottom, black 70%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(to bottom, black 70%, transparent 100%)",
+        }}
+      >
+        <div className="noise-bg" />
+        <div className="hero-glow absolute inset-0" />
+      </div>
       {/* Fixed header — full width invisible wrapper */}
       <header className="fixed top-0 left-0 right-0 z-50 flex justify-center items-start pt-4 px-4 pointer-events-none">
         {/* The pill — always visible, intensifies on scroll */}
