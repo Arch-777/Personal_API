@@ -1,8 +1,7 @@
 "use client";
 
+import { ChevronDown } from "lucide-react";
 import Link from "next/link";
-import { Play, ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 export function HeroSection() {
   return (
@@ -50,13 +49,11 @@ export function HeroSection() {
               className="animate-slide-up opacity-0 flex flex-wrap gap-4 justify-center lg:justify-start"
               style={{ animationDelay: "300ms" }}
             >
-              <Link href="/?auth=signup">
-                <Button
-                  size="lg"
-                  className="bg-foreground text-background hover:bg-foreground/90 font-semibold px-8 cursor-pointer shadow-lg shadow-foreground/10"
-                >
+              <Link 
+                href="/?auth=signup"
+                className="inline-flex h-9 items-center justify-center rounded-lg px-8 py-5 text-sm font-medium transition-colors bg-foreground text-background hover:bg-foreground/90 shadow-lg shadow-foreground/10 cursor-pointer"
+              >
                   Get Started
-                </Button>
               </Link>
             </div>
           </div>

@@ -1,65 +1,67 @@
 "use client";
 
+import { ModeToggle } from "@/components/mode-toggle";
+import { useLogout, useUser } from "@/hooks/use-auth";
 import {
-  ChevronRight,
-  ChevronsUpDown,
-  CreditCard,
-  HelpCircle,
-  Home,
-  Key,
-  LogOut,
-  Plug,
-  Search,
-  Settings,
-  User,
+    ChevronRight,
+    ChevronsUpDown,
+    CreditCard,
+    HelpCircle,
+    Home,
+    Key,
+    LogOut,
+    Plug,
+    Search,
+    Settings,
+    User,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
+    Breadcrumb,
+    BreadcrumbItem,
+    BreadcrumbLink,
+    BreadcrumbList,
+    BreadcrumbPage,
+    BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
+    Collapsible,
+    CollapsibleContent,
+    CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuGroup,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarProvider,
-  SidebarRail,
-  SidebarTrigger,
+    Sidebar,
+    SidebarContent,
+    SidebarFooter,
+    SidebarGroup,
+    SidebarGroupContent,
+    SidebarGroupLabel,
+    SidebarHeader,
+    SidebarInset,
+    SidebarMenu,
+    SidebarMenuButton,
+    SidebarMenuItem,
+    SidebarMenuSub,
+    SidebarMenuSubButton,
+    SidebarMenuSubItem,
+    SidebarProvider,
+    SidebarRail,
+    SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
@@ -235,11 +237,28 @@ const NavMenuItem = ({
   );
 };
 
-const NavUser = ({ user }: { user: UserData }) => {
-  const initials = user.name
-    .split(" ")
-    .map((n) => n[0])
-    .join("");
+const NavUser = () => {
+  const { data: user } = useUser();
+  const { mutate: logout } = useLogout();
+  const router = useRouter();
+
+  if (!user) return null;
+
+  const initials = user.full_name
+    ? user.full_name
+        .split(" ")
+        .map((n: string) => n[0])
+        .join("")
+        .toUpperCase()
+    : "U";
+  
+  const handleAccountClick = () => {
+    router.push("/dashboard/settings");
+  };
+
+  const handleLogoutClick = () => {
+    logout();
+  };
 
   return (
     <SidebarMenu>
@@ -254,11 +273,11 @@ const NavUser = ({ user }: { user: UserData }) => {
             }
           >
             <Avatar className="size-8 rounded-lg">
-              <AvatarImage src={user.avatar} alt={user.name} />
+              <AvatarImage src="" alt={user.full_name} />
               <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-medium">{user.name}</span>
+              <span className="truncate font-medium">{user.full_name}</span>
               <span className="truncate text-xs text-muted-foreground">
                 {user.email}
               </span>
@@ -275,13 +294,13 @@ const NavUser = ({ user }: { user: UserData }) => {
               <DropdownMenuLabel className="p-0 font-normal">
                 <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                   <Avatar className="size-8 rounded-lg">
-                    <AvatarImage src={user.avatar} alt={user.name} />
+                    <AvatarImage src="" alt={user.full_name} />
                     <AvatarFallback className="rounded-lg">
                       {initials}
                     </AvatarFallback>
                   </Avatar>
                   <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-medium">{user.name}</span>
+                    <span className="truncate font-medium">{user.full_name}</span>
                     <span className="truncate text-xs text-muted-foreground">
                       {user.email}
                     </span>
@@ -290,12 +309,12 @@ const NavUser = ({ user }: { user: UserData }) => {
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={handleAccountClick} className="cursor-pointer">
               <User className="mr-2 size-4" />
               Account
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
+            <DropdownMenuItem onClick={handleLogoutClick} className="cursor-pointer">
               <LogOut className="mr-2 size-4" />
               Log out
             </DropdownMenuItem>
@@ -336,7 +355,7 @@ const AppSidebar = ({
         </ScrollArea>
       </SidebarContent>
       <SidebarFooter>
-        {sidebarData.user && <NavUser user={sidebarData.user} />}
+        <NavUser />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
@@ -390,6 +409,9 @@ export function ApplicationShell1({
               )}
             </BreadcrumbList>
           </Breadcrumb>
+          <div className="ml-auto flex items-center space-x-4">
+            <ModeToggle />
+          </div>
         </header>
         <main className="flex flex-1 flex-col gap-4 p-6 overflow-auto">
           {children}

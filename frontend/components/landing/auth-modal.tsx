@@ -106,8 +106,15 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
         window.location.href = data.url;
       }
     } catch (err) {
-      const error = err as { response?: { data?: { detail?: string } } };
-      setError(error?.response?.data?.detail || "Could not connect to Google");
+      const error = err as { response?: { data?: { detail?: string | Record<string, unknown> | Array<{ msg?: string }> } } };
+      const detail = error?.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        setError(detail.map((d) => d.msg).join(", "));
+      } else if (typeof detail === "object" && detail !== null) {
+        setError((detail as Record<string, string>).msg || JSON.stringify(detail));
+      } else {
+        setError(typeof detail === "string" ? detail : "Could not connect to Google");
+      }
     }
   };
 
@@ -128,8 +135,15 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
         await signupMutation.mutateAsync({ email, password: pwd, full_name: name });
       }
     } catch (err) {
-      const error = err as { response?: { data?: { detail?: string } } };
-      setError(error?.response?.data?.detail || "An error occurred");
+      const error = err as { response?: { data?: { detail?: string | Record<string, unknown> | Array<{ msg?: string }> } } };
+      const detail = error?.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        setError(detail.map((d) => d.msg || "Validation Error").join(", "));
+      } else if (typeof detail === "object" && detail !== null) {
+        setError((detail as Record<string, string>).msg || JSON.stringify(detail));
+      } else {
+        setError(typeof detail === "string" ? detail : "An error occurred");
+      }
     }
   };
 
@@ -178,6 +192,7 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
               </Label>
               <Input
                 id="name"
+                name="name"
                 placeholder="Your name"
                 required
                 className="bg-white/5 border-white/10"
@@ -192,6 +207,7 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
             </Label>
             <Input
               id="email"
+              name="email"
               type="email"
               placeholder="you@example.com"
               required
@@ -216,6 +232,7 @@ export function AuthModal({ type, open, onOpenChange }: AuthModalProps) {
             </div>
             <Input
               id="password"
+              name="password"
               type="password"
               placeholder="••••••••"
               required

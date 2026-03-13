@@ -1,3 +1,5 @@
+"use client";
+
 import {
   Accordion,
   AccordionContent,
@@ -11,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useUser } from "@/hooks/use-auth";
 import { Clock, Database, Search } from "lucide-react";
 
 const stats = [
@@ -46,10 +49,16 @@ const recentActivities = [
 ];
 
 export default function DashboardHome() {
+  const { data: user, isLoading } = useUser();
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
   return (
     <div className="space-y-8 flex-1">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Good morning, Aditee Jadhav</h1>
+        <h1 className="text-3xl font-bold tracking-tight">Good morning, {user?.full_name || "User"}</h1>
         <p className="text-muted-foreground mt-2">Here is a quick overview of your personal knowledge layer today.</p>
       </div>
 

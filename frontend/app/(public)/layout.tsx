@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useTheme } from "next-themes";
-import { Sun, Moon } from "lucide-react";
-import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Moon, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 export default function PublicLayout({
   children,
@@ -55,7 +55,7 @@ export default function PublicLayout({
           className="pointer-events-auto w-full max-w-[820px] flex items-center justify-between px-5 py-3 transition-all duration-700 ease-[cubic-bezier(0.4,0,0.2,1)]"
           style={{
             borderRadius: "9999px",
-            background: !isDark
+            background: !(mounted && isDark)
               ? scrolled
                 ? "rgba(255, 255, 255, 0.82)"
                 : "rgba(255, 255, 255, 0.55)"
@@ -68,14 +68,14 @@ export default function PublicLayout({
             WebkitBackdropFilter: scrolled
               ? "blur(24px) saturate(200%)"
               : "blur(12px) saturate(160%)",
-            border: !isDark
+            border: !(mounted && isDark)
               ? scrolled
                 ? "1px solid rgba(0, 0, 0, 0.10)"
                 : "1px solid rgba(0, 0, 0, 0.06)"
               : scrolled
                 ? "1px solid rgba(255, 255, 255, 0.12)"
                 : "1px solid rgba(255, 255, 255, 0.07)",
-            boxShadow: !isDark
+            boxShadow: !(mounted && isDark)
               ? scrolled
                 ? "0 8px 40px rgba(0, 0, 0, 0.12), 0 1px 0 rgba(255,255,255,0.9) inset"
                 : "0 4px 20px rgba(0, 0, 0, 0.06), 0 1px 0 rgba(255,255,255,0.7) inset"
