@@ -19,6 +19,7 @@ from api.core.config import get_settings
 from api.core.db import SessionLocal
 from api.models.connector import Connector
 from api.models.item import Item
+from api.models.user import User  # noqa: F401  # Ensure users table metadata is loaded for FK resolution.
 from normalizer.base import BaseNormalizer, NormalizedItem
 from rag.indexer import index_item_chunks
 

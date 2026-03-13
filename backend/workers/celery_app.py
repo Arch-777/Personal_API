@@ -11,6 +11,13 @@ from redis import Redis
 from redis.exceptions import RedisError
 
 from api.core.config import get_settings
+import api.models.access_log  # noqa: F401  # Ensure ORM metadata is fully registered in worker processes.
+import api.models.api_key  # noqa: F401
+import api.models.chat_session  # noqa: F401
+import api.models.connector  # noqa: F401
+import api.models.item  # noqa: F401
+import api.models.item_chunk  # noqa: F401
+import api.models.user  # noqa: F401
 
 settings = get_settings()
 logger = logging.getLogger(__name__)

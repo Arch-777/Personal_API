@@ -449,6 +449,21 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Add separate queued-state observability if the product needs distinct user-facing queue and run states.
 
+## Step 26 - Worker FK Metadata Registration Hardening
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Added explicit `api.models.user` import to ensure `users` table metadata is present when connector sync flush/commit resolves `connectors.user_id -> users.id` FK.
+  - backend/workers/celery_app.py:
+    - Added startup-time imports for all ORM model modules (`user`, `connector`, `item`, `item_chunk`, `api_key`, `access_log`, `chat_session`) so Celery worker processes preload full SQLAlchemy metadata.
+    - Prevents similar `NoReferencedTableError` failures across other connector and pipeline workers.
+- Verification:
+  - Static validation of worker import graph confirms metadata preloading now occurs before task execution.
+- Next:
+  - Restart all Celery worker containers/processes so the new startup imports are loaded.
+  - Re-run Slack/Spotify/Google/Notion sync tasks and confirm no FK table-resolution retries/errors in logs.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
