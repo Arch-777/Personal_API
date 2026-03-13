@@ -190,3 +190,59 @@ def test_developer_revoke_api_key_success():
 
 	app.dependency_overrides.clear()
 
+
+
+def test_connector_sync_queues_expected_worker_task():
+	from unittest.mock import patch
+	from api.routers import connectors as connectors_router
+
+	class _FakeConnectorResult:
+		def __init__(self, one):
+			self._one = one
+
+		def scalar_one_or_none(self):
+			return self._one
+
+	class _FakeConnectorDb:
+		def __init__(self, connector):
+			self.connector = connector
+			self.committed = False
+
+		def execute(self, _stmt):
+			return _FakeConnectorResult(one=self.connector)
+
+		def commit(self):
+			self.committed = True
+
+	connector = SimpleNamespace(
+		id=uuid.uuid4(),
+		user_id=uuid.uuid4(),
+		platform="gmail",
+		sync_cursor="0",
+		status="connected",
+		error_message=None,
+	)
+	fake_db = _FakeConnectorDb(connector)
+	current_user = SimpleNamespace(id=connector.user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	with patch.object(connectors_router.celery_app, "send_task", return_value=SimpleNamespace(id="task-1")) as send_task:
+		client = TestClient(app)
+		response = client.post("/v1/connectors/gmail/sync")
+
+	assert response.status_code == 202
+	assert response.json() == {"status": "sync_queued", "platform": "gmail"}
+	assert fake_db.committed is True
+	assert connector.status == "syncing"
+
+	send_task.assert_called_once()
+	called_task_name = send_task.call_args.args[0]
+	called_args = send_task.call_args.kwargs["args"]
+	assert called_task_name == "workers.google_worker.sync_gmail"
+	assert called_args[0] == str(connector.id)
+	assert called_args[1] == str(current_user.id)
+	assert called_args[2] == "0"
+
+	app.dependency_overrides.clear()

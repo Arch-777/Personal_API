@@ -243,3 +243,72 @@ Track backend implementation progress step-by-step, with what changed, status, a
 ## Current Status
 - Person 1 progress through Step 10 is completed.
 - Backend auth hashing is runtime-stable and ready for register/login verification.
+
+## Step 11 - Async Processing Foundation (Person 2 / Week 1)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/workers/celery_app.py: Implemented Celery app with standardized queues, task routing, retry/time limits, and Redis dead-letter fallback.
+  - backend/workers/__init__.py: Added package export for shared celery_app.
+  - backend/workers/google_worker.py: Added task stubs for sync_gmail, sync_drive, sync_gcal.
+  - backend/workers/whatsapp_worker.py: Added task stub for sync_whatsapp.
+  - backend/workers/notion_worker.py: Added task stub for sync_notion.
+  - backend/workers/spotify_worker.py: Added task stub for sync_spotify.
+  - backend/workers/file_watcher_worker.py: Added task stub for watch_file_changes.
+  - backend/workers/embedding_worker.py: Added task stub for embed_item.
+  - backend/docker-compose.yml: Added local stack with API, Postgres (pgvector), Redis, and queue-specific worker services.
+  - backend/Dockerfile: Added runtime image for API and worker containers.
+- Verification:
+  - Python compile check passed for workers package.
+  - Command used: py -3 -m compileall workers
+  - Docker compose validation command could not run in this environment because Docker CLI is unavailable.
+  - Full pytest suite passed: 38/38 tests in 0.42s (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_celery_foundation.py -v
+  - Coverage: queue constants, routing table, ResilientTask config attrs, lazy DLQ Redis client, on_failure dead-letter push (including default-queue fallback and RedisError swallowing), celery_app settings (serializers, timezone, prefetch, declared queues), ping task, worker includes.
+- Next:
+  - Implement connector worker logic with connector record loading, token handling, and idempotent upsert flow.
+  - Add POST /v1/connectors/{platform}/sync router to enqueue connector-specific tasks.
+
+## Step 12 - Connector Worker Pipeline and Sync API (Person 2 / Week 2)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/workers/connector_sync.py: Added shared sync runner with connector lookup, token checks, cursor-based ingestion batches, and idempotent item upsert.
+  - backend/workers/google_worker.py: Wired sync_gmail/sync_drive/sync_gcal to shared connector sync pipeline.
+  - backend/workers/whatsapp_worker.py: Wired sync_whatsapp to shared connector sync pipeline.
+  - backend/workers/notion_worker.py: Wired sync_notion to shared connector sync pipeline.
+  - backend/workers/spotify_worker.py: Wired sync_spotify to shared connector sync pipeline.
+  - backend/workers/file_watcher_worker.py: Implemented file watcher task that enqueues embedding task.
+  - backend/workers/embedding_worker.py: Implemented idempotent embedding status update flow on items.
+  - backend/api/routers/connectors.py: Added connector listing/get/bootstrap endpoints and sync queue trigger endpoint.
+  - backend/tests/test_api.py: Added connector sync endpoint test validating queued worker task mapping.
+- Verification:
+  - Python compile checks passed for workers, connectors router, and API tests module.
+  - Command used: py -3 -m compileall workers api/routers/connectors.py tests/test_api.py
+  - pytest execution could not run in this environment because pytest is not installed in the active interpreter.
+- Next:
+  - Replace mock ingestion in connector_sync with real connector API clients and platform normalizers.
+  - Implement normalization modules and route worker output to file-per-document storage + DB upsert path.
+
+## Step 13 - Normalization Pipeline and File Persistence (Person 2 / Week 2)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/normalizer/base.py: Added shared normalizer contract, normalized item dataclass, datetime/text helpers, sender parsing, and deterministic source ID generation.
+  - backend/normalizer/gmail.py: Implemented Gmail message normalization.
+  - backend/normalizer/drive.py: Implemented Drive file normalization.
+  - backend/normalizer/gcal.py: Implemented Calendar event normalization.
+  - backend/normalizer/whatsapp.py: Implemented WhatsApp message normalization.
+  - backend/normalizer/notion.py: Implemented Notion page normalization.
+  - backend/normalizer/spotify.py: Implemented Spotify playback normalization.
+  - backend/workers/connector_sync.py: Replaced mock ingestion with platform API fetchers, wired normalizer registry, added file-per-document persistence under /users/{id}/data/{service}/, and retained idempotent DB upsert flow.
+  - backend/api/core/config.py: Added user_data_root setting for storage location.
+  - backend/.env.example: Added USER_DATA_ROOT variable.
+  - backend/tests/test_normalizers.py: Added unit tests for all platform normalizers and connector sync storage helpers.
+  - backend/requirements.txt: Pinned httpx to a Starlette-compatible range (<0.28) for runtime/test compatibility.
+- Verification:
+  - Targeted pytest suites passed: 53/53 tests in 1.60s (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_normalizers.py tests/test_celery_foundation.py tests/test_api.py -v
+  - Coverage: all normalizer mappings, seeded connector record ingestion path, deterministic file persistence path/contents, metadata enrichment before upsert, Celery foundation regression checks, and connectors API queue trigger behavior.
+- Next:
+  - Implement Workstream 4 (RAG and chat engine): chunking, embedding, retrieval, context assembly, and chat response orchestration.

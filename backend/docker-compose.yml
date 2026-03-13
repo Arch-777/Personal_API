@@ -1,0 +1,225 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: personalapi
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: localpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d personalapi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-google:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.google",
+        "--hostname=worker-google@%h"
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-whatsapp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.whatsapp",
+        "--hostname=worker-whatsapp@%h"
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-notion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.notion",
+        "--hostname=worker-notion@%h"
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-spotify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.spotify",
+        "--hostname=worker-spotify@%h"
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-file-watcher:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=pipeline.file-watcher",
+        "--hostname=worker-file-watcher@%h"
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  worker-embedding:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=pipeline.embedding",
+        "--hostname=worker-embedding@%h"
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

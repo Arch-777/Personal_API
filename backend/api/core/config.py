@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 	debug: bool = Field(default=False)
 
 	cors_origins: str = Field(default="http://localhost:3000")
+	user_data_root: str = Field(default="storage")
 
 	database_url: str = Field(default="postgresql+psycopg://postgres:localpass@localhost:5432/personalapi")
 	database_ssl_mode: str = Field(default="prefer")

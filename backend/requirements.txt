@@ -11,6 +11,6 @@ email-validator
 redis
 celery
 pgvector
-httpx
+httpx<0.28
 pytest
 
