@@ -672,3 +672,15 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Create Coolify application using backend/docker-compose.coolify.yml.
   - Add production environment variables (including Azure PostgreSQL DATABASE_URL and OAuth callbacks).
+
+## Step 28 - Coolify Build Context Path Fix (Dockerfile Not Found)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/docker-compose.coolify.yml: Updated all service build contexts from `.` to `./backend` to align with Coolify deployment from repository root.
+  - Preserved per-service commands and runtime behavior; only image build path resolution was changed.
+- Verification:
+  - Fix directly addresses deployment error: `failed to read dockerfile: open Dockerfile: no such file or directory`.
+  - With `Base Directory=/` and compose path `backend/docker-compose.coolify.yml`, Docker now resolves to `backend/Dockerfile`.
+- Next:
+  - Redeploy from Coolify and validate `api` service startup, DB connectivity, and `/health` endpoint.
