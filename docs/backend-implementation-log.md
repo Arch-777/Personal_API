@@ -464,6 +464,24 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Restart all Celery worker containers/processes so the new startup imports are loaded.
   - Re-run Slack/Spotify/Google/Notion sync tasks and confirm no FK table-resolution retries/errors in logs.
 
+## Step 27 - Google Connector Auto-Provisioning (Drive/GCal Not Found Fix)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Added Google connector row upsert helper and callback hardening to ensure Google connector records exist consistently.
+    - Google callback now upserts all Google platform rows (`gmail`, `drive`, `gcal`) using the latest token payload so follow-up syncs do not fail with `Connector not found`.
+    - Added fallback clone behavior in `GET /v1/connectors/{platform}` and `POST /v1/connectors/{platform}/sync` for Google platforms: if one Google connector exists, missing sibling rows are created automatically.
+- Verification:
+  - Router compile check passed after changes.
+  - Static route-path inspection confirms 404 path now includes Google auto-provision fallback before final not-found response.
+- Next:
+  - Redeploy API service and retry:
+    - `GET /v1/connectors/google/connect?platform=drive`
+    - `GET /v1/connectors/google/connect?platform=gcal`
+    - `POST /v1/connectors/drive/sync`
+    - `POST /v1/connectors/gcal/sync`
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract

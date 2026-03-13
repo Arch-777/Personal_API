@@ -51,6 +51,90 @@ GOOGLE_PLATFORM_SCOPES: dict[str, list[str]] = {
     ],
 }
 
+GOOGLE_CONNECTOR_PLATFORMS = ("gmail", "drive", "gcal")
+
+
+def _ensure_google_connector_row(
+    db: Session,
+    user_id: uuid.UUID,
+    platform: str,
+    access_token: str,
+    refresh_token: str | None,
+    token_expires_at: datetime,
+    platform_email: str | None,
+    google_scope: str | None,
+) -> Connector:
+    existing = db.execute(
+        select(Connector).where(
+            Connector.user_id == user_id,
+            Connector.platform == platform,
+        )
+    ).scalar_one_or_none()
+
+    if existing is not None:
+        existing.encrypted_access_token = access_token
+        if refresh_token:
+            existing.encrypted_refresh_token = refresh_token
+        existing.token_expires_at = token_expires_at
+        if platform_email:
+            existing.platform_email = platform_email
+        existing.status = "connected"
+        existing.error_message = None
+        metadata = existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
+        metadata["google_scopes"] = google_scope
+        existing.metadata_json = metadata
+        return existing
+
+    connector = Connector(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        platform=platform,
+        platform_email=platform_email,
+        encrypted_access_token=access_token,
+        encrypted_refresh_token=refresh_token,
+        token_expires_at=token_expires_at,
+        status="connected",
+        metadata_json={"google_scopes": google_scope},
+    )
+    db.add(connector)
+    return connector
+
+
+def _clone_missing_google_connector_from_existing(
+    db: Session,
+    user_id: uuid.UUID,
+    target_platform: str,
+) -> Connector | None:
+    source = db.execute(
+        select(Connector).where(
+            Connector.user_id == user_id,
+            Connector.platform.in_(GOOGLE_CONNECTOR_PLATFORMS),
+        )
+    ).scalars().first()
+    if source is None:
+        return None
+
+    metadata = source.metadata_json if isinstance(source.metadata_json, dict) else {}
+    cloned_metadata = dict(metadata)
+    cloned_metadata["google_connector_cloned_from"] = source.platform
+
+    connector = Connector(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        platform=target_platform,
+        platform_email=source.platform_email,
+        encrypted_access_token=source.encrypted_access_token,
+        encrypted_refresh_token=source.encrypted_refresh_token,
+        token_expires_at=source.token_expires_at,
+        status="connected",
+        error_message=None,
+        metadata_json=cloned_metadata,
+    )
+    db.add(connector)
+    db.commit()
+    db.refresh(connector)
+    return connector
+
 
 @router.get("/google/connect")
 def google_connect(
@@ -139,40 +223,32 @@ def google_callback(
     except Exception:  # noqa: BLE001
         pass
 
-    existing = db.execute(
-        select(Connector).where(
-            Connector.user_id == user_id,
-            Connector.platform == normalized_platform,
-        )
-    ).scalar_one_or_none()
+    # Ensure the requested Google connector exists and proactively create sibling
+    # Google connector rows to avoid "Connector not found" for drive/gcal/gmail.
+    token_scope = token_data.get("scope") if isinstance(token_data.get("scope"), str) else None
+    _ensure_google_connector_row(
+        db=db,
+        user_id=user_id,
+        platform=normalized_platform,
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_expires_at=token_expires_at,
+        platform_email=platform_email,
+        google_scope=token_scope,
+    )
 
-    if existing:
-        existing.encrypted_access_token = access_token
-        if refresh_token:
-            existing.encrypted_refresh_token = refresh_token
-        existing.token_expires_at = token_expires_at
-        if platform_email:
-            existing.platform_email = platform_email
-        existing.status = "connected"
-        existing.error_message = None
-        metadata = existing.metadata_json if isinstance(existing.metadata_json, dict) else {}
-        metadata["google_scopes"] = token_data.get("scope")
-        existing.metadata_json = metadata
-        db.commit()
-    else:
-        connector = Connector(
-            id=uuid.uuid4(),
+    for platform_name in GOOGLE_CONNECTOR_PLATFORMS:
+        _ensure_google_connector_row(
+            db=db,
             user_id=user_id,
-            platform=normalized_platform,
-            platform_email=platform_email,
-            encrypted_access_token=access_token,
-            encrypted_refresh_token=refresh_token,
+            platform=platform_name,
+            access_token=access_token,
+            refresh_token=refresh_token,
             token_expires_at=token_expires_at,
-            status="connected",
-            metadata_json={"google_scopes": token_data.get("scope")},
+            platform_email=platform_email,
+            google_scope=token_scope,
         )
-        db.add(connector)
-        db.commit()
+    db.commit()
 
     return {"status": "connected", "platform": normalized_platform}
 
@@ -637,7 +713,14 @@ def sync_connector(
         )
     ).scalar_one_or_none()
     if connector is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+        if normalized_platform in GOOGLE_CONNECTOR_PLATFORMS:
+            connector = _clone_missing_google_connector_from_existing(
+                db=db,
+                user_id=current_user.id,
+                target_platform=normalized_platform,
+            )
+        if connector is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
     # Clear stale errors, but only workers should mark a connector as actively syncing.
     connector.error_message = None
@@ -705,7 +788,14 @@ def get_connector(
         )
     ).scalar_one_or_none()
     if connector is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
+        if normalized_platform in GOOGLE_CONNECTOR_PLATFORMS:
+            connector = _clone_missing_google_connector_from_existing(
+                db=db,
+                user_id=current_user.id,
+                target_platform=normalized_platform,
+            )
+        if connector is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
     return ConnectorResponse.model_validate(connector)
 
