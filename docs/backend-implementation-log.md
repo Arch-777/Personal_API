@@ -499,3 +499,21 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Coverage: all normalizer mappings, seeded connector record ingestion path, deterministic file persistence path/contents, metadata enrichment before upsert, Celery foundation regression checks, and connectors API queue trigger behavior.
 - Next:
   - Implement Workstream 4 (RAG and chat engine): chunking, embedding, retrieval, context assembly, and chat response orchestration.
+
+## Step 14 - RAG Core and Chat Orchestration (Person 2 / Week 3)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/rag/chunker.py: Implemented token-window chunking with overlap and metadata for chunk boundaries.
+  - backend/rag/embedder.py: Implemented deterministic embedding generator and cosine similarity helper for offline-safe semantic scoring.
+  - backend/rag/retriever.py: Implemented hybrid retriever combining lexical matching and optional embedding similarity, returning ranked RAG candidates.
+  - backend/rag/context.py: Implemented context assembly, source serialization, document/file link extraction, and grounded answer composition.
+  - backend/rag/engine.py: Implemented orchestration across embedder, retriever, and context builder with unified query result payload.
+  - backend/api/routers/chat.py: Implemented POST /v1/chat/message and GET /v1/chat/{session_id}/history with chat session persistence and RAG result integration.
+  - backend/tests/test_rag.py: Added tests for chunking, deterministic embeddings, retriever ranking, context assembly, engine outputs, and chat endpoint wiring.
+- Verification:
+  - Targeted pytest suites passed: 62/62 tests in 1.57s (Python 3.11.9).
+  - Command: py -3 -m pytest tests/test_rag.py tests/test_normalizers.py tests/test_celery_foundation.py tests/test_api.py tests/test_search.py -v
+  - Coverage: RAG chunk/embed/retrieve/context/engine behavior, chat endpoint orchestration, and regression checks for workers, normalizers, API routes, and search.
+- Next:
+  - Implement Workstream 5 (Realtime + MCP integration): websocket event dispatch for sync/index updates and MCP tool endpoints for user-scoped retrieval.
