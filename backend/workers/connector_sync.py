@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,10 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
     try:
         with SessionLocal() as db:
             connector = _get_connector(db, parsed_connector_id, parsed_user_id, platform)
+            if platform in {"gmail", "drive", "gcal"}:
+                _maybe_refresh_google_token(db, connector)
+            if platform == "spotify":
+                _maybe_refresh_spotify_token(db, connector)
             tokens = _resolve_tokens(connector)
 
             source_cursor = cursor if cursor is not None else connector.sync_cursor
@@ -104,6 +109,97 @@ def _get_connector(db, connector_id: uuid.UUID, user_id: uuid.UUID, platform: st
     if connector is None:
         raise ValueError(f"Connector not found for platform '{platform}'")
     return connector
+
+
+def _maybe_refresh_spotify_token(db: Any, connector: Connector) -> None:
+    """Refresh the Spotify access token when it is expired or expires within 5 minutes."""
+    settings = get_settings()
+    if not settings.spotify_client_id or not settings.spotify_client_secret:
+        return  # OAuth not configured; dev/bootstrap tokens used as-is.
+
+    if connector.token_expires_at is None:
+        return
+
+    expiry = connector.token_expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    if expiry > datetime.now(UTC) + timedelta(minutes=5):
+        return  # Still valid.
+
+    refresh_token = connector.encrypted_refresh_token
+    if not refresh_token:
+        raise ValueError("Spotify access token expired and no refresh token is stored")
+
+    credentials = base64.b64encode(
+        f"{settings.spotify_client_id}:{settings.spotify_client_secret}".encode()
+    ).decode()
+
+    with httpx.Client(timeout=15.0) as client:
+        response = client.post(
+            "https://accounts.spotify.com/api/token",
+            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        response.raise_for_status()
+        token_data = response.json()
+
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise ValueError("Spotify token refresh returned an empty access_token")
+
+    expires_in = int(token_data.get("expires_in", 3600))
+    connector.encrypted_access_token = new_access_token
+    connector.token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    new_refresh = token_data.get("refresh_token")
+    if new_refresh:
+        connector.encrypted_refresh_token = new_refresh
+    db.commit()
+
+
+def _maybe_refresh_google_token(db: Any, connector: Connector) -> None:
+    """Refresh Google OAuth access token when expired or close to expiring."""
+    settings = get_settings()
+    if not settings.google_client_id or not settings.google_client_secret:
+        return
+
+    if connector.token_expires_at is None:
+        return
+
+    expiry = connector.token_expires_at
+    if expiry.tzinfo is None:
+        expiry = expiry.replace(tzinfo=UTC)
+    if expiry > datetime.now(UTC) + timedelta(minutes=5):
+        return
+
+    refresh_token = connector.encrypted_refresh_token
+    if not refresh_token:
+        raise ValueError("Google access token expired and no refresh token is stored")
+
+    with httpx.Client(timeout=15.0) as client:
+        response = client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        response.raise_for_status()
+        token_data = response.json()
+
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        raise ValueError("Google token refresh returned an empty access_token")
+
+    expires_in = int(token_data.get("expires_in", 3600))
+    connector.encrypted_access_token = new_access_token
+    connector.token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
+    db.commit()
 
 
 def _resolve_tokens(connector: Connector) -> dict[str, str | None]:
@@ -239,7 +335,8 @@ def _fetch_notion_records(access_token: str, source_cursor: str | None) -> tuple
 
 
 def _fetch_spotify_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
-    params: dict[str, Any] = {"limit": 25}
+    # Fetch recently-played (cursor-based, incremental).
+    params: dict[str, Any] = {"limit": 50}
     if source_cursor:
         params["after"] = source_cursor
 
@@ -248,9 +345,39 @@ def _fetch_spotify_records(access_token: str, source_cursor: str | None) -> tupl
         access_token=access_token,
         params=params,
     )
-    rows = payload.get("items") if isinstance(payload.get("items"), list) else []
-    next_cursor = _extract_next_cursor(payload, source_cursor)
-    return [row for row in rows if isinstance(row, dict)], next_cursor
+    rp_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    rp_rows = [
+        dict(row, _record_type="recently_played")
+        for row in rp_items
+        if isinstance(row, dict)
+    ]
+
+    # Advance cursor: cursors.after is the timestamp of the newest track in the batch.
+    cursors = payload.get("cursors")
+    next_cursor = (
+        str(cursors["after"])
+        if isinstance(cursors, dict) and cursors.get("after")
+        else _extract_next_cursor(payload, source_cursor)
+    )
+
+    # Fetch liked/saved songs as well (first 50, best-effort).
+    liked_rows: list[dict[str, Any]] = []
+    try:
+        liked_payload = _http_get_json(
+            url="https://api.spotify.com/v1/me/tracks",
+            access_token=access_token,
+            params={"limit": 50, "offset": 0},
+        )
+        liked_items = liked_payload.get("items") if isinstance(liked_payload.get("items"), list) else []
+        liked_rows = [
+            dict(item, _record_type="liked")
+            for item in liked_items
+            if isinstance(item, dict)
+        ]
+    except Exception:  # noqa: BLE001 — liked songs fetch is non-critical
+        pass
+
+    return rp_rows + liked_rows, next_cursor
 
 
 def _fetch_whatsapp_records(

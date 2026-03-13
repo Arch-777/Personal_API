@@ -628,6 +628,54 @@
           ]
         },
         {
+          "name": "Google Gmail - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform=gmail",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                { "key": "platform", "value": "gmail" }
+              ]
+            },
+            "description": "Shortcut: returns Google OAuth URL for Gmail connector onboarding."
+          }
+        },
+        {
+          "name": "Google Drive - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform=drive",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                { "key": "platform", "value": "drive" }
+              ]
+            },
+            "description": "Shortcut: returns Google OAuth URL for Drive connector onboarding."
+          }
+        },
+        {
+          "name": "Google Calendar - Get Connect URL",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/google/connect?platform=gcal",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "google", "connect"],
+              "query": [
+                { "key": "platform", "value": "gcal" }
+              ]
+            },
+            "description": "Shortcut: returns Google OAuth URL for Calendar connector onboarding."
+          }
+        },
+        {
           "name": "Spotify - Get Connect URL",
           "request": {
             "method": "GET",
@@ -815,6 +863,45 @@
               ]
             },
             "description": "Queues sync for selected connector platform."
+          }
+        },
+        {
+          "name": "Gmail - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/gmail/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "gmail", "sync"]
+            },
+            "description": "Shortcut: triggers Gmail sync."
+          }
+        },
+        {
+          "name": "Drive - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/drive/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "drive", "sync"]
+            },
+            "description": "Shortcut: triggers Drive sync."
+          }
+        },
+        {
+          "name": "GCal - Trigger Sync",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/gcal/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "gcal", "sync"]
+            },
+            "description": "Shortcut: triggers Google Calendar sync."
           }
         }
       ]

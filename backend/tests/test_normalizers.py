@@ -131,7 +131,7 @@ def test_spotify_normalizer_maps_track_and_artists():
 
 	item = normalizer.normalize_record(row)
 	assert item is not None
-	assert item.type == "media"
+	assert item.type == "track"
 	assert item.title == "Morning Light"
 	assert item.sender_name == "Artist A, Artist B"
 	assert item.metadata_json["album"] == "Sunrise"

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
 	app_version: str = Field(default="0.1.0")
 	api_prefix: str = Field(default="/v1")
 	debug: bool = Field(default=False)
+	enable_inline_sync_fallback: bool = Field(default=False)
 
 	cors_origins: str = Field(default="http://localhost:3000")
 	user_data_root: str = Field(default="storage")
@@ -21,6 +22,15 @@ class Settings(BaseSettings):
 	secret_key: str = Field(default="change-me-in-production")
 	access_token_expire_minutes: int = Field(default=60)
 	algorithm: str = Field(default="HS256")
+	google_client_id: str = Field(default="")
+	google_client_secret: str = Field(default="")
+	google_auth_redirect_uri: str = Field(default="http://127.0.0.1:8000/auth/google/callback")
+	google_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/google/callback")
+	google_token_info_url: str = Field(default="https://oauth2.googleapis.com/tokeninfo")
+
+	spotify_client_id: str = Field(default="")
+	spotify_client_secret: str = Field(default="")
+	spotify_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/spotify/callback")
 
 	model_config = SettingsConfigDict(
 		env_file=".env",

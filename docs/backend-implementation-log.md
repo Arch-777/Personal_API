@@ -177,6 +177,193 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Restart backend and retry POST /auth/register and POST /auth/login smoke tests.
 
+## Step 11 - Google OAuth Login for Hackathon + Worker Readiness
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/google_oauth.py: Added Google ID token verification against Google tokeninfo endpoint with issuer/audience/email_verified checks.
+  - backend/api/core/config.py: Added GOOGLE_CLIENT_ID and GOOGLE_TOKEN_INFO_URL settings.
+  - backend/api/schemas/auth.py: Added GoogleLoginRequest schema.
+  - backend/api/routers/auth.py: Added POST /auth/google endpoint that creates/updates user and returns JWT.
+  - backend/.env.example: Added Google OAuth env var placeholders.
+  - backend/tests/test_auth_google.py: Added tests for new-user login, existing-user login, and invalid token behavior.
+  - frontend/hooks/use-auth.ts: Fixed email/password login endpoint path and added useGoogleLogin hook.
+- Verification:
+  - Test execution passed: 10 passed in 1.05s.
+  - Command used: Set-Location backend; py -3 -m pytest tests/test_auth_google.py tests/test_api.py tests/test_search.py -q
+- Next:
+  - Add frontend Google Sign-In button/One Tap and call POST /auth/google with id_token.
+  - Reuse Google OAuth refresh tokens for Gmail/Drive connector onboarding flow.
+
+## Step 12 - Spotify Worker and OAuth Connect Flow
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/normalizer/spotify.py: Full normalizer with recently-played and liked-songs support. Distinct source_ids (play:id:played_at vs liked:id). play_type in metadata.
+  - backend/workers/spotify_worker.py: Celery task wiring sync_spotify to run_connector_sync.
+  - backend/workers/connector_sync.py: Enhanced _fetch_spotify_records to fetch recently-played (limit 50, cursor-based) + liked songs (limit 50, best-effort). Added _maybe_refresh_spotify_token for automatic Spotify access token refresh using stored refresh_token.
+  - backend/api/routers/connectors.py: Added GET /v1/connectors/spotify/connect (returns Spotify auth URL with signed state JWT) and GET /v1/connectors/spotify/callback (exchanges code, upserts connector row, stores tokens).
+  - backend/api/core/config.py: Added SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI settings.
+  - backend/.env + backend/.env.example: Added Spotify env var placeholders.
+  - backend/tests/test_normalizers.py: Fixed item type assertion from "media" to "track".
+- Verification:
+  - Test execution passed: 58 passed in 1.40s.
+  - Command used: py -3 -m pytest tests/ -q
+- Next:
+  - Set SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REDIRECT_URI in .env.
+  - Register http://127.0.0.1:8000/v1/connectors/spotify/callback in Spotify Dashboard redirect URIs.
+  - Frontend calls GET /v1/connectors/spotify/connect → redirects user to returned URL.
+  - After callback, trigger POST /v1/connectors/spotify/sync to start first data pull.
+
+## Step 13 - Postman Coverage for Spotify Connector Flow
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added collection variables: spotifyAuthUrl, spotifyAuthCode, spotifyState.
+    - Added Connectors folder requests:
+      - GET /v1/connectors/spotify/connect
+      - GET /v1/connectors/spotify/callback?code=&state=
+      - GET /v1/connectors/spotify
+      - POST /v1/connectors/spotify/sync
+    - Added assertions and pre-request guards for code/state dependent callback flow.
+- Verification:
+  - Collection JSON updated successfully and preserves existing auth + variable automation.
+- Next:
+  - In Postman, run Auth/Login first, then Spotify - Get Connect URL.
+  - Complete consent in browser, set spotifyAuthCode, then run callback and sync requests.
+
+## Step 14 - Postman Base URL Alignment (Spotify Connect 404 Fix)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Updated default baseUrl from http://localhost:8000 to http://127.0.0.1:8000.
+    - Updated pre-request baseUrl fallback to http://127.0.0.1:8000.
+- Verification:
+  - Runtime endpoint check returned 401 (route exists and requires auth): GET /v1/connectors/spotify/connect.
+  - OpenAPI check confirms route is loaded: /v1/connectors/spotify/connect present.
+- Next:
+  - In Postman, ensure `baseUrl=http://127.0.0.1:8000` and `apiPrefix=/v1`.
+  - Run Auth/Login, then rerun Spotify - Get Connect URL.
+
+## Step 15 - Postman apiPrefix URL Assembly Fix
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Normalized `apiPrefix` default from `/v1` to `v1`.
+    - Added prerequest normalization to strip leading/trailing slashes from `apiPrefix`.
+    - Updated request raw URLs to use `{{baseUrl}}/{{apiPrefix}}/...`.
+- Verification:
+  - Collection JSON remains valid after update.
+- Next:
+  - In Postman collection variables set `baseUrl=http://127.0.0.1:8000` and `apiPrefix=v1`.
+  - Retry Connectors -> Spotify - Get Connect URL.
+
+## Step 16 - Live Spotify Sync Validation
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Executed live Spotify sync using stored connected connector.
+  - Verified direct Spotify API access for:
+    - GET /v1/me/player/recently-played
+    - GET /v1/me/tracks
+  - Persisted fetched Spotify records into items table.
+- Verification:
+  - Connector row present: platform=spotify, status=connected.
+  - Pre-sync spotify items count: 0.
+  - Sync result: status=completed, records_fetched=100, records_normalized=100, items_upserted=100.
+  - Post-sync spotify items count: 100.
+  - Sample persisted rows confirmed (`type=track`, play-based `source_id`).
+- Next:
+  - Use POST /v1/connectors/spotify/sync for subsequent incremental syncs.
+  - Optional: run sync via Celery worker process (not direct function invocation) for production-like execution.
+
+## Step 17 - Development Fallback Policy (Production Redis Enforcement)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/core/config.py: Added `ENABLE_INLINE_SYNC_FALLBACK` setting.
+  - backend/api/routers/connectors.py: Inline sync fallback now runs only when both `DEBUG=true` and `ENABLE_INLINE_SYNC_FALLBACK=true`.
+  - backend/.env and backend/.env.example: Added `ENABLE_INLINE_SYNC_FALLBACK=true` for local development convenience.
+- Verification:
+  - Backend test suite passed after changes.
+- Next:
+  - For production: set `DEBUG=false` and `ENABLE_INLINE_SYNC_FALLBACK=false`, and run Redis/Celery.
+
+## Step 18 - Google Connector OAuth + Worker Token Refresh
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Added `GET /v1/connectors/google/connect?platform=gmail|drive|gcal` to generate Google OAuth URL.
+    - Added `GET /v1/connectors/google/callback` to exchange code, resolve user email, and upsert connector tokens.
+  - backend/workers/connector_sync.py:
+    - Added Google token refresh logic before sync for `gmail`, `drive`, `gcal` connectors.
+  - backend/api/core/config.py:
+    - Added `GOOGLE_CLIENT_SECRET` and `GOOGLE_REDIRECT_URI` settings.
+  - backend/.env and backend/.env.example:
+    - Added Google connector OAuth env variables.
+- Verification:
+  - Backend tests passed after changes: 58 passed.
+- Next:
+  - Register `http://127.0.0.1:8000/v1/connectors/google/callback` in Google Cloud OAuth redirect URIs.
+  - Connect each platform (`gmail`, `drive`, `gcal`) and trigger `POST /v1/connectors/{platform}/sync`.
+
+## Step 19 - Google App Login/Signup OAuth + Full Postman Endpoint Coverage
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/api/routers/auth.py:
+    - Added `GET /auth/google/connect` to issue Google OAuth URL for app login/signup.
+    - Added `GET /auth/google/callback` to exchange code/state and return PersonalAPI JWT.
+  - backend/api/core/config.py:
+    - Added `GOOGLE_AUTH_REDIRECT_URI` setting.
+  - backend/.env and backend/.env.example:
+    - Added `GOOGLE_AUTH_REDIRECT_URI` values.
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added Auth requests for:
+      - `POST /auth/google`
+      - `GET /auth/google/connect`
+      - `GET /auth/google/callback`
+    - Added Connectors requests for missing endpoints:
+      - `GET /v1/connectors/`
+      - `GET /v1/connectors/google/connect`
+      - `GET /v1/connectors/google/callback`
+      - Generic platform endpoints:
+        - `GET /v1/connectors/{platform}`
+        - `POST /v1/connectors/{platform}/bootstrap`
+        - `POST /v1/connectors/{platform}/sync`
+    - Added new collection variables for Google auth flows and connector platform selection.
+- Verification:
+  - Postman collection JSON validation passed.
+  - Backend tests passed: 58 passed.
+- Next:
+  - Register both Google redirect URIs in Google Cloud Console:
+    - `http://127.0.0.1:8000/auth/google/callback`
+    - `http://127.0.0.1:8000/v1/connectors/google/callback`
+  - Use Postman to execute Google app auth flow and Google connector onboarding flow end-to-end.
+
+## Step 20 - Postman Google Quick Actions (Gmail/Drive/GCal)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added explicit Google connect shortcut requests:
+      - Google Gmail - Get Connect URL
+      - Google Drive - Get Connect URL
+      - Google Calendar - Get Connect URL
+    - Added explicit Google sync shortcut requests:
+      - Gmail - Trigger Sync
+      - Drive - Trigger Sync
+      - GCal - Trigger Sync
+    - Kept existing generic connector endpoints for flexible platform testing.
+- Verification:
+  - Collection JSON validation passed.
+- Next:
+  - Use shortcuts for quick platform testing without changing variables.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
