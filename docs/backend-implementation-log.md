@@ -628,3 +628,47 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Coverage: chunking logic, deterministic embeddings, LLM path, chunk-aware retriever behavior, favorites/mail intent reranking, connector/api/search regressions, and worker foundation checks.
 - Next:
   - Apply migration 002_item_chunks.sql to the target database and backfill chunk embeddings for existing items so live chat uses chunk/vector retrieval immediately.
+
+## Step 25 - Coolify Production Deployment Runbook
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Documented production deployment procedure for Coolify using existing backend Docker Compose stack.
+  - Defined production env variable mapping and OAuth callback domain updates.
+  - Added deploy sequencing guidance: backend first, then frontend, then OAuth validation.
+- Verification:
+  - Reviewed repository deployment artifacts:
+    - backend/docker-compose.yml
+    - backend/Dockerfile
+    - backend/.env.example
+    - frontend/lib/api-client.ts
+- Next:
+  - Execute deployment checklist in Coolify with production domains and secrets.
+
+## Step 26 - Coolify Backend-Only Deployment (No Frontend)
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - Produced backend-only deployment procedure for Coolify using Docker Compose services in backend/docker-compose.yml.
+  - Scoped configuration to API domain, backend env vars, migrations, volumes, and OAuth callback URLs.
+- Verification:
+  - Deployment guidance validated against:
+    - backend/docker-compose.yml
+    - backend/.env.example
+    - backend/migrations/002_item_chunks.sql
+- Next:
+  - Deploy backend app in Coolify and run production smoke tests on API + connector sync queue.
+
+## Step 27 - Coolify Compose for Azure PostgreSQL Production
+- Status: Completed
+- Date: 2026-03-13
+- Changes:
+  - backend/docker-compose.coolify.yml: Added a production-focused Docker Compose stack for Coolify.
+  - Removed local PostgreSQL service from deployment topology and kept Redis + API + Celery workers.
+  - Preserved queue-specific worker commands and startup ordering via Redis healthcheck dependency.
+- Verification:
+  - Compose file reviewed against existing backend worker/task routing and startup commands.
+  - File is ready to be selected in Coolify as the compose definition path.
+- Next:
+  - Create Coolify application using backend/docker-compose.coolify.yml.
+  - Add production environment variables (including Azure PostgreSQL DATABASE_URL and OAuth callbacks).
