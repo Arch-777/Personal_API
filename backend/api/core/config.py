@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 	access_token_expire_minutes: int = Field(default=60)
 	algorithm: str = Field(default="HS256")
 	google_client_id: str = Field(default="")
+	google_allowed_client_ids: str = Field(default="")
 	google_client_secret: str = Field(default="")
 	google_auth_redirect_uri: str = Field(default="http://127.0.0.1:8000/auth/google/callback")
 	google_redirect_uri: str = Field(default="http://127.0.0.1:8000/v1/connectors/google/callback")
@@ -58,6 +59,14 @@ class Settings(BaseSettings):
 	@property
 	def cors_origin_list(self) -> list[str]:
 		return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+	@property
+	def google_allowed_client_id_list(self) -> list[str]:
+		if self.google_allowed_client_ids.strip():
+			return [client_id.strip() for client_id in self.google_allowed_client_ids.split(",") if client_id.strip()]
+		if self.google_client_id.strip():
+			return [self.google_client_id.strip()]
+		return []
 
 
 @lru_cache
