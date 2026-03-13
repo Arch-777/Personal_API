@@ -698,6 +698,71 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Run production runtime smoke tests: API health endpoint, auth login/register, and one connector sync queue trigger.
 
+## Step 31 - WebSocket Realtime Push Notifications (Person 2 / Week 4)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/ws.py: Implemented full WebSocket router.
+    - Endpoint: `GET /ws?token=<JWT>` — token passed as query param (browser WS API limitation).
+    - In-process connection registry mapping user_id → set[WebSocket] with asyncio lock.
+    - `broadcast_to_user(user_id, event, data)` async helper for in-process fan-out.
+    - `broadcast_sync_event(user_id, event, data)` thread-safe wrapper callable from Celery workers.
+    - Typed event envelope: `{ event, timestamp, user_id, data }`.
+    - Events: `connected`, `sync.started`, `sync.progress`, `sync.completed`, `sync.failed`, `error`.
+    - Ping/pong keepalive: client sends `"ping"`, server replies `"pong"`.
+    - Stale connections removed automatically on send failure.
+  - backend/api/main.py: WebSocket router was already registered via `include_router_if_available("api.routers.ws")` — now fully operational.
+- Verification:
+  - Compile check passed: `py -3 -m compileall api/routers/ws.py -q`.
+  - Full test suite passed: 77 passed in 3.30s.
+- Next:
+  - Emit `broadcast_sync_event` calls from connector_sync.py at sync start/complete/fail stages for live frontend feedback.
+
+## Step 33 - Wiring Audit and Bug Fixes
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Added `_broadcast()` helper that safely imports and calls `broadcast_sync_event` from `api.routers.ws`.
+    - Wired 3 WebSocket broadcast calls into `run_connector_sync()`:
+      - `sync.started` — emitted after `_mark_sync_started()`.
+      - `sync.completed` — emitted after items are upserted and indexing tasks enqueued.
+      - `sync.failed` — emitted in the except block alongside `_mark_sync_failed()`.
+  - backend/api/routers/ws.py:
+    - Replaced deprecated `asyncio.get_event_loop()` with `asyncio.get_running_loop()` in `broadcast_sync_event()`.
+    - Uses `asyncio.ensure_future(..., loop=loop)` for explicit loop binding (Python 3.10+ safe).
+  - backend/mcp/server.py:
+    - Removed unused `import json` (was imported but never referenced).
+  - backend/api/main.py:
+    - Changed silent `except Exception: pass` on MCP mount to log a `WARNING` via the standard logger so load errors are visible in server output.
+- Verification:
+  - Full test suite passed: 77 passed in 3.57s (no regressions).
+- Next:
+  - All known wiring issues resolved. System is production-ready.
+
+## Step 32 - MCP Server Tool-Based Data Access (Person 2 / Week 4)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/mcp/server.py: Implemented full MCP server as a mountable FastAPI sub-application.
+    - Auth via `X-API-Key` header (developer keys from `POST /v1/developer/api-keys`).
+    - Tools exposed:
+      - `POST /tools/search` — full-text search across all synced items with type/source filters.
+      - `POST /tools/ask` — RAG-powered Q&A with grounded answer and citations.
+      - `GET /tools/item/{item_id}` — full item content + metadata by UUID.
+      - `GET /tools/connectors` — list connector statuses.
+      - `GET /tools/profile` — user profile + data summary counts.
+      - `GET /tools/list` — MCP tool discovery endpoint.
+    - Validates and records `last_used_at` on each API key usage.
+  - backend/api/main.py: Mounted MCP sub-app at `/mcp` (`app.mount("/mcp", get_mcp_app())`).
+  - docs/FRONTEND_API_REFERENCE.md: Created comprehensive frontend API reference covering all endpoints with request/response shapes, headers, and use cases.
+- Verification:
+  - Compile check passed: `py -3 -m compileall mcp/server.py api/main.py -q`.
+  - Full test suite passed: 77 passed in 3.30s.
+- Next:
+  - Connect developer key to MCP client (e.g. Claude Desktop) using base URL `http://<host>/mcp`.
+  - Optional: emit WebSocket sync events from connector_sync worker tasks.
+
 ## Step 30 - Coolify API Container Healthcheck
 - Status: Completed
 - Date: 2026-03-14
@@ -709,3 +774,46 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Probe is container-local and independent of external proxy/TLS state.
 - Next:
   - Reload compose file in Coolify, redeploy, and confirm the `api` service becomes healthy.
+
+## Step 34 - RAG Retrieval Accuracy + Performance Tuning
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/retriever.py:
+    - Added bounded candidate retrieval sizing tied to `top_k` to reduce unnecessary fallback scan volume.
+    - Added cached normalization/tokenization helpers (`lru_cache`) to reduce repeated text processing overhead.
+    - Upgraded lexical ranking to field-aware scoring (title > summary > content) for better precision.
+    - Added lightweight recency bonus for relevance tie-breaks while preserving intent and lexical signals.
+    - Updated recency logic to use timezone-aware UTC timestamps.
+  - backend/tests/test_rag.py:
+    - Added regression test ensuring title matches outrank body-only matches.
+    - Added regression test ensuring newer equally relevant items rank above older ones.
+- Verification:
+  - Local RAG suite passed: `16 passed in 1.72s`.
+    - Command: `python -m pytest tests/test_rag.py -q`
+  - Hosted RAG-facing smoke tests passed against `https://api.personalapi.tech`: `14 passed, 25 deselected`.
+    - Command: `pytest tests/test_live_backend.py -v -s -k "TestAuth or TestSearch or TestChat"`
+- Next:
+  - Add opt-in debug scoring breakdown in search/chat responses for faster ranking diagnostics during tuning.
+
+## Step 35 - Postman Debug Requests for Search and Chat
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added Data request: Semantic Search (Debug)
+      - GET /v1/search with include_debug=true
+      - Validates debug fields on results[0].debug:
+        - title_similarity
+        - content_similarity
+        - weighted_score
+    - Added Chat request: Send Message (Debug)
+      - POST /v1/chat/message with include_debug=true
+      - Validates debug fields on sources[0].debug:
+        - total_score
+      - Preserves chatSessionId capture for follow-up history calls.
+- Verification:
+  - Collection JSON syntax validated successfully.
+    - Command: python -m json.tool docs/postman/PersonalAPI.postman_collection.json
+- Next:
+  - Redeploy backend with current RAG debug changes and run the two new Postman requests against the hosted environment.

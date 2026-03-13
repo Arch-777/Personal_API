@@ -45,7 +45,7 @@ class RAGEngine:
 					max_tokens=settings.rag_llm_max_tokens,
 				)
 
-	def query(self, query: str, top_k: int = 8, type_filter: str | None = None) -> dict[str, Any]:
+	def query(self, query: str, top_k: int = 8, type_filter: str | None = None, include_debug: bool = False) -> dict[str, Any]:
 		normalized_query = " ".join(query.split()).strip()
 		if not normalized_query:
 			return {
@@ -63,9 +63,10 @@ class RAGEngine:
 			top_k=top_k,
 			type_filter=type_filter,
 			query_embedding=query_embedding,
+			include_debug=include_debug,
 		)
 
-		built: BuiltContext = self.context_builder.build(normalized_query, retrieved)
+		built: BuiltContext = self.context_builder.build(normalized_query, retrieved, include_debug=include_debug)
 		answer = self.context_builder.compose_answer(normalized_query, retrieved)
 
 		if self.use_llm and self.generator is not None:

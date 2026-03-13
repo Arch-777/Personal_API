@@ -1,5 +1,5 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -126,6 +126,85 @@ def test_hybrid_retriever_ranks_relevant_items_first():
 	assert len(results) == 1
 	assert results[0].source == "drive"
 	assert results[0].score > 0
+
+
+def test_hybrid_retriever_prioritizes_title_matches_over_body_only_matches():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="drive",
+			title="Quarterly risk register",
+			summary="Risk review",
+			content="General planning notes",
+			metadata_json={},
+			item_date=now,
+			file_path="/users/u/data/drive/risk-register.json",
+			embedding=None,
+			created_at=now,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Project planning",
+			summary="General summary",
+			content="This document contains risk register notes in the body",
+			metadata_json={},
+			item_date=now,
+			file_path="/users/u/data/notion/planning.json",
+			embedding=None,
+			created_at=now,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="risk register", top_k=5)
+
+	assert len(results) == 2
+	assert results[0].source == "drive"
+	assert "risk register" in (results[0].title or "").lower()
+
+
+def test_hybrid_retriever_prefers_more_recent_item_when_relevance_is_equal():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="drive",
+			title="Team roadmap",
+			summary="Quarterly roadmap",
+			content="Objectives and timeline",
+			metadata_json={},
+			item_date=now - timedelta(days=2),
+			file_path="/users/u/data/drive/roadmap-new.json",
+			embedding=None,
+			created_at=now,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Team roadmap",
+			summary="Quarterly roadmap",
+			content="Objectives and timeline",
+			metadata_json={},
+			item_date=now - timedelta(days=140),
+			file_path="/users/u/data/notion/roadmap-old.json",
+			embedding=None,
+			created_at=now,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="team roadmap", top_k=5)
+
+	assert len(results) == 2
+	assert results[0].item_date > results[1].item_date
 
 
 def test_hybrid_retriever_ignores_stopword_noise_for_mail_queries():
@@ -466,6 +545,32 @@ def test_rag_engine_returns_answer_with_sources():
 	assert len(result["file_links"]) == 1
 
 
+def test_rag_engine_include_debug_adds_source_breakdown():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Roadmap",
+			summary="Roadmap summary",
+			content="Q1 objectives and timeline",
+			metadata_json={"file_path": "/users/u/data/notion/roadmap.json"},
+			item_date=now,
+			file_path="/users/u/data/notion/roadmap.json",
+			embedding=None,
+			created_at=now,
+		)
+	]
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(db=db, user_id=uuid.uuid4())
+	result = engine.query("roadmap", top_k=5, include_debug=True)
+
+	assert len(result["sources"]) == 1
+	assert "debug" in result["sources"][0]
+	assert "total_score" in result["sources"][0]["debug"]
+
+
 def test_rag_engine_uses_llm_generator_when_enabled():
 	now = datetime.now(UTC)
 	rows = [
@@ -528,7 +633,7 @@ def test_chat_endpoint_returns_rag_payload(monkeypatch):
 	monkeypatch.setattr(
 		chat_router.RAGEngine,
 		"query",
-		lambda self, query, top_k=8, type_filter=None: {
+		lambda self, query, top_k=8, type_filter=None, include_debug=False: {
 			"answer": "Synthetic answer",
 			"sources": [
 				{
@@ -537,6 +642,7 @@ def test_chat_endpoint_returns_rag_payload(monkeypatch):
 					"source": "notion",
 					"score": 0.9,
 					"preview": "preview",
+					"debug": {"weighted_score": 0.9} if include_debug else None,
 				}
 			],
 			"documents": ["Roadmap"],
@@ -552,6 +658,43 @@ def test_chat_endpoint_returns_rag_payload(monkeypatch):
 	assert body["answer"] == "Synthetic answer"
 	assert len(body["sources"]) == 1
 	assert body["documents"] == ["Roadmap"]
+
+	app.dependency_overrides.clear()
+
+
+def test_chat_endpoint_debug_mode_returns_source_debug(monkeypatch):
+	from api.routers import chat as chat_router
+
+	fake_db = FakeChatDb()
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = _override_user
+
+	monkeypatch.setattr(
+		chat_router.RAGEngine,
+		"query",
+		lambda self, query, top_k=8, type_filter=None, include_debug=False: {
+			"answer": "Synthetic answer",
+			"sources": [
+				{
+					"id": "doc-2",
+					"type": "document",
+					"source": "drive",
+					"score": 0.88,
+					"preview": "debug preview",
+					"debug": {"total_score": 0.88} if include_debug else None,
+				}
+			],
+			"documents": ["Plan"],
+			"file_links": ["/users/u/data/drive/plan.json"],
+		},
+	)
+
+	client = TestClient(app)
+	response = client.post("/v1/chat/message?include_debug=true", json={"message": "show plan"})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["sources"][0]["debug"]["total_score"] == 0.88
 
 	app.dependency_overrides.clear()
 

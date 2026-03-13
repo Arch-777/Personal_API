@@ -3,7 +3,8 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from functools import lru_cache
 
 from sqlalchemy import Float, and_, cast, or_, select
 from sqlalchemy.orm import Session
@@ -95,6 +96,7 @@ class HybridRetriever:
 		type_filter: str | None = None,
 		query_embedding: list[float] | None = None,
 		candidate_limit: int = 200,
+		include_debug: bool = False,
 	) -> list[RetrievedItem]:
 		normalized_query = " ".join(query.split()).strip().lower()
 		if not normalized_query:
@@ -105,6 +107,7 @@ class HybridRetriever:
 		intent = _infer_intent(normalized_query, query_tokens)
 		active_tokens = query_keywords if query_keywords else query_tokens
 		query_token_list = list(active_tokens)
+		effective_candidate_limit = max(20, min(candidate_limit, max(top_k * 12, 40)))
 
 		if intent.requests_recent:
 			effective_limit = intent.requested_count or top_k
@@ -119,8 +122,9 @@ class HybridRetriever:
 			user_id=user_id,
 			query_embedding=query_embedding,
 			type_filter=type_filter,
-			candidate_limit=candidate_limit,
+			candidate_limit=effective_candidate_limit,
 			intent=intent,
+			include_debug=include_debug,
 		)
 		if chunk_candidates:
 			deduped = _dedupe_and_group(chunk_candidates)
@@ -150,7 +154,7 @@ class HybridRetriever:
 			if like_filters:
 				stmt = stmt.where(or_(*like_filters))
 
-		stmt = stmt.order_by(Item.item_date.desc().nullslast(), Item.created_at.desc()).limit(max(20, candidate_limit))
+		stmt = stmt.order_by(Item.item_date.desc().nullslast(), Item.created_at.desc()).limit(effective_candidate_limit)
 		rows = self.db.execute(stmt).scalars().all()
 
 		scored: list[RetrievedItem] = []
@@ -160,7 +164,7 @@ class HybridRetriever:
 				continue
 			if not _matches_intent_source(row_source=row.source, row_type=row.type, intent=intent):
 				continue
-			score = _score_item(
+			score, score_debug = _score_item(
 				row=row,
 				normalized_query=normalized_query,
 				query_tokens=query_tokens,
@@ -184,6 +188,7 @@ class HybridRetriever:
 					item_date=row.item_date,
 					file_path=row.file_path,
 					score=score,
+					debug=score_debug if include_debug else {},
 					canonical_key=_canonical_group_key(
 						source=row.source,
 							source_id=getattr(row, "source_id", None),
@@ -196,7 +201,7 @@ class HybridRetriever:
 
 		combined = chunk_candidates + scored
 		deduped = _dedupe_and_group(combined)
-		reranked = _rerank_grouped_results(deduped, intent=intent)
+		reranked = _rerank_grouped_results(deduped, intent=intent, include_debug=include_debug)
 		reranked.sort(key=lambda item: (item.score, item.item_date or datetime.min), reverse=True)
 		return reranked[:top_k]
 
@@ -207,6 +212,7 @@ class HybridRetriever:
 		type_filter: str | None,
 		candidate_limit: int,
 		intent: QueryIntent,
+		include_debug: bool = False,
 	) -> list[RetrievedItem]:
 		if not query_embedding:
 			return []
@@ -264,7 +270,7 @@ class HybridRetriever:
 						metadata=item.metadata_json or {},
 						sender_name=item.sender_name,
 					),
-					debug={"distance": float(distance or 1.0)},
+					debug={"distance": float(distance or 1.0)} if include_debug else {},
 				)
 			)
 		return results
@@ -326,22 +332,31 @@ def _score_item(
 	query_keywords: set[str],
 	intent: QueryIntent,
 	query_embedding: list[float] | None,
-) -> float:
+) -> tuple[float, dict]:
 	title_text = _normalize(row.title)
 	summary_text = _normalize(row.summary)
 	content_text = _normalize(row.content)
 	combined = " ".join([part for part in [title_text, summary_text, content_text] if part])
 
 	if not combined:
-		return 0.0
+		return 0.0, {}
 
-	doc_tokens = _tokenize(combined)
+	title_tokens = _tokenize(title_text)
+	summary_tokens = _tokenize(summary_text)
+	content_tokens = _tokenize(content_text)
+	doc_tokens = title_tokens | summary_tokens | content_tokens
 	if not doc_tokens:
-		return 0.0
+		return 0.0, {}
 
 	active_query_tokens = query_keywords if query_keywords else query_tokens
 	overlap = len(active_query_tokens & doc_tokens)
-	lexical_score = overlap / max(len(active_query_tokens), 1)
+	coverage = overlap / max(len(active_query_tokens), 1)
+	field_score = (
+		(0.55 * (len(active_query_tokens & title_tokens) / max(len(active_query_tokens), 1)))
+		+ (0.25 * (len(active_query_tokens & summary_tokens) / max(len(active_query_tokens), 1)))
+		+ (0.20 * (len(active_query_tokens & content_tokens) / max(len(active_query_tokens), 1)))
+	)
+	lexical_score = (0.65 * field_score) + (0.35 * coverage)
 	phrase_bonus = 0.35 if normalized_query in combined else 0.0
 	title_bonus = 0.2 if normalized_query in title_text else 0.0
 
@@ -355,8 +370,21 @@ def _score_item(
 		combined_text=combined,
 		intent=intent,
 	)
-
-	return float(lexical_score + phrase_bonus + title_bonus + (embedding_bonus * 0.5) + intent_bonus)
+	recency_bonus = _recency_bonus(row.item_date) if overlap > 0 or intent_bonus > 0 else 0.0
+	total_score = float(lexical_score + phrase_bonus + title_bonus + (embedding_bonus * 0.5) + intent_bonus + recency_bonus)
+	return total_score, {
+		"lexical_score": round(lexical_score, 6),
+		"field_score": round(field_score, 6),
+		"coverage": round(coverage, 6),
+		"phrase_bonus": round(phrase_bonus, 6),
+		"title_bonus": round(title_bonus, 6),
+		"embedding_bonus": round(embedding_bonus, 6),
+		"intent_bonus": round(intent_bonus, 6),
+		"recency_bonus": round(recency_bonus, 6),
+		"overlap_count": int(overlap),
+		"query_token_count": int(len(active_query_tokens)),
+		"total_score": round(total_score, 6),
+	}
 
 
 def _intent_bonus(row: Item, query_tokens: set[str], combined_text: str, intent: QueryIntent) -> float:
@@ -433,13 +461,22 @@ def _favorite_metadata_score(metadata: dict) -> float:
 	return bonus
 
 
-def _normalize(value: str | None) -> str:
-	if not value:
-		return ""
+@lru_cache(maxsize=4096)
+def _normalize_cached(value: str) -> str:
 	return " ".join(value.lower().split())
 
 
-def _tokenize(text: str) -> set[str]:
+def _normalize(value: str | None) -> str:
+	if not value:
+		return ""
+	return _normalize_cached(value)
+
+
+@lru_cache(maxsize=8192)
+def _tokenize_cached(text: str) -> frozenset[str]:
+	if not text:
+		return frozenset()
+
 	raw_tokens = [token.strip(".,;:!?()[]{}\"'`") for token in text.split()]
 	tokens: set[str] = set()
 	for raw in raw_tokens:
@@ -453,7 +490,11 @@ def _tokenize(text: str) -> set[str]:
 			normalized = _normalize_token(part)
 			if normalized:
 				tokens.add(normalized)
-	return tokens
+	return frozenset(tokens)
+
+
+def _tokenize(text: str) -> set[str]:
+	return set(_tokenize_cached(text))
 
 
 def _remove_stopwords(tokens: set[str]) -> set[str]:
@@ -539,7 +580,7 @@ def _dedupe_and_group(results: list[RetrievedItem]) -> list[RetrievedItem]:
 	return list(best_by_key.values())
 
 
-def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent) -> list[RetrievedItem]:
+def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent, include_debug: bool = False) -> list[RetrievedItem]:
 	for result in results:
 		adjustment = 0.0
 		metadata = result.metadata or {}
@@ -567,6 +608,9 @@ def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent) -
 			if "linkedin" in text:
 				adjustment += 0.5
 		result.score += adjustment
+		if include_debug:
+			result.debug["rerank_adjustment"] = round(adjustment, 6)
+			result.debug["reranked_score"] = round(float(result.score), 6)
 	return results
 
 
@@ -589,4 +633,19 @@ def _canonical_group_key(
 
 	base_source_id = (source_id or title or "unknown").strip().lower()
 	return f"{source}:{base_source_id}"
+
+
+def _recency_bonus(item_date: datetime | None) -> float:
+	if item_date is None:
+		return 0.0
+	if item_date.tzinfo is None:
+		item_date = item_date.replace(tzinfo=UTC)
+	age_days = max(0.0, (datetime.now(UTC) - item_date).total_seconds() / 86400.0)
+	if age_days <= 7:
+		return 0.08
+	if age_days <= 30:
+		return 0.04
+	if age_days <= 90:
+		return 0.02
+	return 0.0
 

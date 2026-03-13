@@ -18,6 +18,7 @@ class SearchResult(BaseModel):
 	score: float
 	metadata: dict[str, Any] = Field(default_factory=dict)
 	item_date: datetime | None = None
+	debug: dict[str, Any] | None = None
 
 
 class SearchResponse(BaseModel):

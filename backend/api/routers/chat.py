@@ -21,6 +21,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 @router.post("/message", response_model=ChatMessageResponse)
 def send_chat_message(
 	payload: ChatMessageRequest,
+	include_debug: bool = Query(default=False, description="Include score/debug breakdown in source entries."),
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ) -> ChatMessageResponse:
@@ -40,7 +41,7 @@ def send_chat_message(
 	)
 
 	engine = RAGEngine(db=db, user_id=current_user.id)
-	rag_result = engine.query(query=user_message, top_k=8)
+	rag_result = engine.query(query=user_message, top_k=8, include_debug=include_debug)
 
 	assistant_sources = list(rag_result.get("sources", []))
 	assistant_answer = str(rag_result.get("answer", ""))

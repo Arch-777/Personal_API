@@ -17,17 +17,20 @@ def semantic_search(
 	q: str = Query(min_length=1, max_length=2000),
 	top_k: int = Query(default=10, ge=1, le=50),
 	type_filter: str | None = Query(default=None),
+	include_debug: bool = Query(default=False, description="Include score/debug breakdown for each search result."),
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ) -> SearchResponse:
 	search_term = q.strip()
 	like_term = f"%{search_term}%"
+	title_similarity = func.similarity(func.coalesce(Item.title, ""), search_term)
+	content_similarity = func.similarity(func.coalesce(Item.content, ""), search_term)
 
 	score_expr = case(
-		(func.similarity(func.coalesce(Item.title, ""), search_term) > 0, func.similarity(func.coalesce(Item.title, ""), search_term) * 1.5),
+		(title_similarity > 0, title_similarity * 1.5),
 		else_=0,
 	) + case(
-		(func.similarity(func.coalesce(Item.content, ""), search_term) > 0, func.similarity(func.coalesce(Item.content, ""), search_term)),
+		(content_similarity > 0, content_similarity),
 		else_=0,
 	)
 
@@ -52,6 +55,8 @@ def semantic_search(
 			Item.metadata_json.label("metadata"),
 			Item.item_date,
 			cast(score_expr, Float).label("score"),
+			cast(title_similarity, Float).label("title_similarity"),
+			cast(content_similarity, Float).label("content_similarity"),
 		)
 		.where(*filters)
 		.order_by(score_expr.desc(), Item.item_date.desc().nullslast(), Item.created_at.desc())
@@ -67,6 +72,11 @@ def semantic_search(
 			score=float(row.score or 0.0),
 			metadata=row.metadata or {},
 			item_date=row.item_date,
+			debug={
+				"title_similarity": float(row.title_similarity or 0.0),
+				"content_similarity": float(row.content_similarity or 0.0),
+				"weighted_score": float(row.score or 0.0),
+			} if include_debug else None,
 		)
 		for row in rows
 	]

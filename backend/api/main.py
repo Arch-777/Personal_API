@@ -53,3 +53,11 @@ include_router_if_available("api.routers.developer", prefix=settings.api_prefix)
 include_router_if_available("api.routers.chat", prefix=settings.api_prefix)
 include_router_if_available("api.routers.ws")
 
+# Mount MCP sub-application
+try:
+	from mcp.server import get_mcp_app
+	app.mount("/mcp", get_mcp_app())
+except Exception as _mcp_err:  # noqa: BLE001
+	import logging as _logging
+	_logging.getLogger(__name__).warning("MCP server failed to load: %s", _mcp_err)
+

@@ -97,3 +97,34 @@ def test_search_respects_top_k_limit():
 
 	app.dependency_overrides.clear()
 
+
+def test_search_include_debug_returns_similarity_breakdown():
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="drive",
+			summary="Meeting notes summary",
+			content="Meeting notes content",
+			metadata={"doc": "1"},
+			item_date=datetime.now(UTC),
+			score=0.82,
+			title_similarity=0.4,
+			content_similarity=0.22,
+		)
+	]
+
+	app.dependency_overrides[get_db] = lambda: FakeSearchDb(rows)
+	app.dependency_overrides[get_current_user] = _override_user
+
+	client = TestClient(app)
+	response = client.get("/v1/search/?q=meeting&top_k=5&include_debug=true")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["count"] == 1
+	assert body["results"][0]["debug"]["title_similarity"] == 0.4
+	assert body["results"][0]["debug"]["content_similarity"] == 0.22
+
+	app.dependency_overrides.clear()
+

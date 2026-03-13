@@ -14,7 +14,7 @@ class BuiltContext:
 
 
 class ContextBuilder:
-	def build(self, query: str, retrieved: list[RetrievedItem], max_sources: int = 8) -> BuiltContext:
+	def build(self, query: str, retrieved: list[RetrievedItem], max_sources: int = 8, include_debug: bool = False) -> BuiltContext:
 		selected = retrieved[:max_sources]
 
 		context_lines: list[str] = []
@@ -28,15 +28,16 @@ class ContextBuilder:
 				f"[{index}] ({item.source}/{item.type}) score={item.score:.3f} id={item.id} :: {preview}"
 			)
 
-			sources.append(
-				{
-					"id": item.id,
-					"type": item.type,
-					"source": item.source,
-					"score": float(item.score),
-					"preview": preview,
-				}
-			)
+			source_entry = {
+				"id": item.id,
+				"type": item.type,
+				"source": item.source,
+				"score": float(item.score),
+				"preview": preview,
+			}
+			if include_debug and item.debug:
+				source_entry["debug"] = item.debug
+			sources.append(source_entry)
 
 			documents.append(item.title or item.id)
 

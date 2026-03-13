@@ -607,6 +607,61 @@
               }
             }
           ]
+        },
+        {
+          "name": "Semantic Search (Debug)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/search/?q={{searchQuery}}&top_k=10&type_filter={{typeFilter}}&include_debug=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "search", ""],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "{{searchQuery}}"
+                },
+                {
+                  "key": "top_k",
+                  "value": "10"
+                },
+                {
+                  "key": "type_filter",
+                  "value": "{{typeFilter}}"
+                },
+                {
+                  "key": "include_debug",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Runs semantic search with score debug details per result (title/content similarity and weighted score)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Search response contains results', function () {",
+                  "  pm.expect(body).to.have.property('results');",
+                  "  pm.expect(body.results).to.be.an('array');",
+                  "});",
+                  "if (body.results.length > 0) {",
+                  "  pm.test('Debug fields exist on first result', function () {",
+                  "    pm.expect(body.results[0]).to.have.property('debug');",
+                  "    pm.expect(body.results[0].debug).to.have.property('title_similarity');",
+                  "    pm.expect(body.results[0].debug).to.have.property('content_similarity');",
+                  "    pm.expect(body.results[0].debug).to.have.property('weighted_score');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -646,6 +701,57 @@
                   "  pm.expect(body).to.have.property('session_id');",
                   "  pm.expect(body).to.have.property('answer');",
                   "});",
+                  "if (body.session_id) { pm.collectionVariables.set('chatSessionId', body.session_id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Send Message (Debug)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"{{chatMessage}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/chat/message?include_debug=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "chat", "message"],
+              "query": [
+                {
+                  "key": "include_debug",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Sends a chat message through RAG with per-source debug score breakdown in sources[].debug."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Chat response fields exist', function () {",
+                  "  pm.expect(body).to.have.property('session_id');",
+                  "  pm.expect(body).to.have.property('answer');",
+                  "});",
+                  "if (body.sources && body.sources.length > 0) {",
+                  "  pm.test('Debug fields exist on first source', function () {",
+                  "    pm.expect(body.sources[0]).to.have.property('debug');",
+                  "    pm.expect(body.sources[0].debug).to.have.property('total_score');",
+                  "  });",
+                  "}",
                   "if (body.session_id) { pm.collectionVariables.set('chatSessionId', body.session_id); }"
                 ]
               }

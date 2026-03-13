@@ -20,6 +20,14 @@ from api.core.db import SessionLocal
 from api.models.connector import Connector
 from api.models.item import Item
 from normalizer.base import BaseNormalizer, NormalizedItem
+
+def _broadcast(user_id: str, event: str, data: dict[str, Any]) -> None:
+    """Best-effort broadcast to WebSocket clients. Silently skips if unavailable."""
+    try:
+        from api.routers.ws import broadcast_sync_event
+        broadcast_sync_event(user_id, event, data)
+    except Exception:  # noqa: BLE001
+        pass
 from normalizer.drive import DriveNormalizer
 from normalizer.gcal import GCalNormalizer
 from normalizer.gmail import GmailNormalizer
@@ -63,6 +71,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
     parsed_user_id = uuid.UUID(user_id)
 
     _mark_sync_started(parsed_connector_id, parsed_user_id)
+    _broadcast(user_id, "sync.started", {"platform": platform, "connector_id": connector_id})
 
     try:
         with SessionLocal() as db:
@@ -92,6 +101,12 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
 
         _enqueue_indexing_tasks(item_ids=upserted_item_ids, user_id=parsed_user_id, source=platform)
 
+        _broadcast(user_id, "sync.completed", {
+            "platform": platform,
+            "connector_id": connector_id,
+            "items_upserted": len(upserted_item_ids),
+        })
+
         return {
             "status": "completed",
             "platform": platform,
@@ -105,6 +120,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
         }
     except Exception as exc:
         _mark_sync_failed(parsed_connector_id, parsed_user_id, str(exc))
+        _broadcast(user_id, "sync.failed", {"platform": platform, "connector_id": connector_id, "error": str(exc)})
         raise
 
 

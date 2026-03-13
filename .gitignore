@@ -1,0 +1,100 @@
+# -----------------------------------------------------------------------
+# Python / Backend
+# -----------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.env.bak
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# pytest / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+
+# mypy / type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# -----------------------------------------------------------------------
+# Storage / user data (generated at runtime)
+# -----------------------------------------------------------------------
+backend/storage/users/
+storage/users/
+
+# -----------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------
+*.log
+logs/
+
+# -----------------------------------------------------------------------
+# Docker
+# -----------------------------------------------------------------------
+*.env.docker
+
+# -----------------------------------------------------------------------
+# Node / Frontend
+# -----------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/build/
+
+# Testing
+coverage/
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Vercel
+.vercel
+
+# -----------------------------------------------------------------------
+# OS / Editor
+# -----------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

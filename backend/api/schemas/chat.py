@@ -15,6 +15,7 @@ class ChatSource(BaseModel):
 	source: str
 	score: float
 	preview: str
+	debug: dict[str, Any] | None = None
 
 
 class ChatMessageResponse(BaseModel):
