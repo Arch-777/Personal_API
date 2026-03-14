@@ -626,6 +626,176 @@ def test_build_github_token_exchange_error_detail_returns_none_without_known_fie
 	assert detail is None
 
 
+def test_github_connect_returns_authorize_url_with_redirect_uri():
+	from unittest.mock import patch
+	from api.routers import connectors as connectors_router
+
+	app.dependency_overrides[get_current_user] = _override_user
+
+	with patch.object(
+		connectors_router,
+		"get_settings",
+		return_value=SimpleNamespace(
+			github_client_id="github-client-id",
+			github_client_secret="github-client-secret",
+			github_redirect_uri="http://127.0.0.1:8000/v1/connectors/github/callback",
+		),
+	):
+		client = TestClient(app)
+		response = client.get("/v1/connectors/github/connect")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["url"].startswith("https://github.com/login/oauth/authorize?")
+	assert "client_id=github-client-id" in body["url"]
+	assert "redirect_uri=http%3A%2F%2F127.0.0.1%3A8000%2Fv1%2Fconnectors%2Fgithub%2Fcallback" in body["url"]
+	assert "state=" in body["url"]
+
+	app.dependency_overrides.clear()
+
+
+def test_github_callback_redirects_to_frontend_on_success(monkeypatch):
+	from api.routers import connectors as connectors_router
+
+	class _FakeDbForGithubCallback:
+		pass
+
+	class _FakeHttpResponse:
+		def __init__(self, payload: dict, status_code: int = 200):
+			self._payload = payload
+			self.status_code = status_code
+			self.headers = {"content-type": "application/json"}
+			self.text = ""
+
+		def raise_for_status(self):
+			return None
+
+		def json(self):
+			return self._payload
+
+	class _FakeHttpClient:
+		def post(self, _url, data=None, headers=None):
+			assert isinstance(data, dict)
+			assert data["code"] == "oauth-code"
+			return _FakeHttpResponse(
+				{
+					"access_token": "gho_test_access_token",
+					"scope": "read:user user:email repo",
+					"token_type": "bearer",
+				}
+			)
+
+		def get(self, url, headers=None):
+			if url.endswith("/user"):
+				return _FakeHttpResponse({"login": "arch-777", "name": "Arch", "email": "arch@example.com"})
+			if url.endswith("/user/emails"):
+				return _FakeHttpResponse([
+					{"email": "arch@example.com", "primary": True, "verified": True},
+				])
+			if url.endswith("/user/orgs"):
+				return _FakeHttpResponse([
+					{"login": "Const-Coders"},
+				])
+			return _FakeHttpResponse({}, status_code=404)
+
+	fake_db = _FakeDbForGithubCallback()
+	user_id = uuid.uuid4()
+	recorded_upsert: dict[str, object] = {}
+
+	monkeypatch.setattr(connectors_router, "decode_access_token", lambda _state: {"sub": f"{user_id}|github"})
+	monkeypatch.setattr(
+		connectors_router,
+		"get_settings",
+		lambda: SimpleNamespace(
+			github_client_id="github-client-id",
+			github_client_secret="github-client-secret",
+			github_redirect_uri="http://127.0.0.1:8000/v1/connectors/github/callback",
+			frontend_app_url="http://127.0.0.1:3000",
+		),
+	)
+	monkeypatch.setattr(connectors_router, "get_http_client", lambda _timeout: _FakeHttpClient())
+
+	def _fake_upsert(*, db, user_id, access_token, platform_email, metadata):
+		recorded_upsert["user_id"] = user_id
+		recorded_upsert["access_token"] = access_token
+		recorded_upsert["platform_email"] = platform_email
+		recorded_upsert["metadata"] = metadata
+
+	monkeypatch.setattr(connectors_router, "_upsert_github_connector", _fake_upsert)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get(
+		"/v1/connectors/github/callback?code=oauth-code&state=oauth-state",
+		follow_redirects=False,
+	)
+
+	assert response.status_code == 307
+	location = response.headers["location"]
+	assert location.startswith("http://127.0.0.1:3000/dashboard/integrations?")
+	assert "integration=github" in location
+	assert "status=success" in location
+	assert recorded_upsert["user_id"] == user_id
+	assert recorded_upsert["access_token"] == "gho_test_access_token"
+	assert recorded_upsert["platform_email"] == "arch@example.com"
+
+	app.dependency_overrides.clear()
+
+
+def test_github_callback_missing_code_returns_400_without_redirect(monkeypatch):
+	from api.routers import connectors as connectors_router
+
+	class _FakeDbForGithubCallback:
+		pass
+
+	monkeypatch.setattr(
+		connectors_router,
+		"get_settings",
+		lambda: SimpleNamespace(
+			github_client_id="github-client-id",
+			github_client_secret="github-client-secret",
+			github_redirect_uri="http://127.0.0.1:8000/v1/connectors/github/callback",
+			frontend_app_url="http://127.0.0.1:3000",
+		),
+	)
+
+	app.dependency_overrides[get_db] = lambda: _FakeDbForGithubCallback()
+	client = TestClient(app)
+	response = client.get(
+		"/v1/connectors/github/callback?code=&state=oauth-state&redirect_to_frontend=false",
+		follow_redirects=False,
+	)
+
+	assert response.status_code == 400
+	assert response.json()["detail"] == "Missing GitHub OAuth code"
+
+	app.dependency_overrides.clear()
+
+
+def test_build_frontend_integrations_callback_url_normalizes_message():
+	from api.routers import connectors as connectors_router
+
+	message = "line-1\nline-2\r\n" + ("x" * 300)
+
+	with pytest.MonkeyPatch.context() as monkeypatch:
+		monkeypatch.setattr(
+			connectors_router,
+			"get_settings",
+			lambda: SimpleNamespace(frontend_app_url="http://127.0.0.1:3000"),
+		)
+		url = connectors_router._build_frontend_integrations_callback_url(
+			platform="github",
+			ok=False,
+			message=message,
+		)
+
+	assert url.startswith("http://127.0.0.1:3000/dashboard/integrations?")
+	assert "integration=github" in url
+	assert "status=error" in url
+	assert "line-1+line-2" in url
+	assert len(url) < 400
+
+
 def test_github_webhook_ping_returns_ok(monkeypatch):
 	from api.routers import connectors as connectors_router
 

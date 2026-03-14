@@ -138,12 +138,20 @@ def _build_github_token_exchange_error_detail(token_data: dict[str, object]) -> 
 def _build_frontend_integrations_callback_url(platform: str, ok: bool, message: str | None = None) -> str:
     settings = get_settings()
     base = settings.frontend_app_url.rstrip("/")
+
+    normalized_message: str | None = None
+    if isinstance(message, str):
+        candidate = " ".join(message.replace("\r", " ").replace("\n", " ").split()).strip()
+        if candidate:
+            # Keep query strings short and avoid leaking verbose backend internals to browser URLs.
+            normalized_message = candidate[:180]
+
     query = {
         "integration": platform,
         "status": "success" if ok else "error",
     }
-    if message:
-        query["message"] = message
+    if normalized_message:
+        query["message"] = normalized_message
     return f"{base}/dashboard/integrations?{urllib.parse.urlencode(query)}"
 
 
@@ -317,21 +325,48 @@ def github_connect(
         "scope": GITHUB_CONNECT_SCOPES,
         "state": state,
     }
+    if settings.github_redirect_uri:
+        params["redirect_uri"] = settings.github_redirect_uri
     return {"url": f"https://github.com/login/oauth/authorize?{urllib.parse.urlencode(params)}"}
 
 
-@router.get("/github/callback")
+@router.get("/github/callback", response_model=None)
 def github_callback(
     code: str,
     state: str,
     db: Session = Depends(get_db),
-) -> dict[str, str]:
+    redirect_to_frontend: bool = True,
+) -> RedirectResponse | dict[str, str]:
     settings = get_settings()
+
+    def _frontend_redirect(ok: bool, message: str) -> RedirectResponse:
+        redirect_url = _build_frontend_integrations_callback_url(
+            platform="github",
+            ok=ok,
+            message=message,
+        )
+        return RedirectResponse(url=redirect_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+
     if not settings.github_client_id or not settings.github_client_secret:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="GitHub integration is not configured")
+        detail = "GitHub integration is not configured"
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message=detail)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
 
     code = code.strip()
     state = state.strip()
+
+    if not code:
+        detail = "Missing GitHub OAuth code"
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+    if not state:
+        detail = "Missing OAuth state parameter"
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
     try:
         payload = decode_access_token(state)
@@ -341,7 +376,10 @@ def github_callback(
         if platform_part.strip().lower() != "github":
             raise ValueError("Invalid connector in OAuth state")
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired state parameter") from exc
+        detail = "Invalid or expired state parameter"
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
 
     try:
         token_request_payload = {
@@ -364,7 +402,10 @@ def github_callback(
         token_resp.raise_for_status()
         token_data = _parse_github_token_response(token_resp)
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange GitHub auth code for tokens") from exc
+        detail = "Failed to exchange GitHub auth code for tokens"
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
 
     access_token_candidates = (
         token_data.get("access_token"),
@@ -382,6 +423,8 @@ def github_callback(
     if access_token is None:
         detail = _build_github_token_exchange_error_detail(token_data)
         if detail is not None:
+            if redirect_to_frontend:
+                return _frontend_redirect(ok=False, message=detail)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
         response_status = getattr(token_resp, "status_code", "unknown")
@@ -398,6 +441,8 @@ def github_callback(
         if preview:
             fallback_detail += f": {preview}"
 
+        if redirect_to_frontend:
+            return _frontend_redirect(ok=False, message="GitHub OAuth callback returned an invalid token response")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=fallback_detail)
 
     github_login: str | None = None
@@ -485,6 +530,10 @@ def github_callback(
         platform_email=platform_email,
         metadata=metadata,
     )
+
+    success_message = "Connected github"
+    if redirect_to_frontend:
+        return _frontend_redirect(ok=True, message=success_message)
 
     return {
         "status": "connected",
