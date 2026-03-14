@@ -1,4 +1,5 @@
 import types
+import time
 
 import pytest
 
@@ -35,8 +36,10 @@ def test_verify_google_id_token_supports_bearer_prefix(monkeypatch):
                 {
                     "iss": "https://accounts.google.com",
                     "aud": "web-client-id",
+                    "exp": str(int(time.time()) + 300),
                     "email": "person@example.com",
                     "email_verified": "true",
+                    "sub": "google-subject-1",
                     "name": "Person",
                 },
             )
@@ -46,7 +49,7 @@ def test_verify_google_id_token_supports_bearer_prefix(monkeypatch):
 
     identity = google_oauth.verify_google_id_token("Bearer valid-id-token")
 
-    assert identity == {"email": "person@example.com", "name": "Person"}
+    assert identity == {"email": "person@example.com", "name": "Person", "sub": "google-subject-1"}
 
 
 def test_verify_google_id_token_falls_back_to_access_token(monkeypatch):
@@ -54,13 +57,14 @@ def test_verify_google_id_token_falls_back_to_access_token(monkeypatch):
         if params and "id_token" in params:
             return _FakeResponse(400, {"error": "invalid_token"})
         if params and params.get("access_token") == "valid-access-token":
-            return _FakeResponse(200, {"aud": "mobile-client-id"})
+            return _FakeResponse(200, {"aud": "mobile-client-id", "expires_in": "3600"})
         if headers and headers.get("Authorization") == "Bearer valid-access-token":
             return _FakeResponse(
                 200,
                 {
                     "email": "mobile@example.com",
                     "verified_email": True,
+                    "sub": "google-subject-2",
                     "name": "Mobile User",
                 },
             )
@@ -70,7 +74,7 @@ def test_verify_google_id_token_falls_back_to_access_token(monkeypatch):
 
     identity = google_oauth.verify_google_id_token("valid-access-token")
 
-    assert identity == {"email": "mobile@example.com", "name": "Mobile User"}
+    assert identity == {"email": "mobile@example.com", "name": "Mobile User", "sub": "google-subject-2"}
 
 
 def test_verify_google_id_token_rejects_mismatched_audience(monkeypatch):
@@ -81,6 +85,7 @@ def test_verify_google_id_token_rejects_mismatched_audience(monkeypatch):
                 {
                     "iss": "accounts.google.com",
                     "aud": "other-client-id",
+                    "exp": str(int(time.time()) + 300),
                     "email": "person@example.com",
                     "email_verified": "true",
                 },
@@ -91,3 +96,24 @@ def test_verify_google_id_token_rejects_mismatched_audience(monkeypatch):
 
     with pytest.raises(ValueError, match="Google token audience mismatch"):
         google_oauth.verify_google_id_token("wrong-audience-token")
+
+
+def test_verify_google_id_token_rejects_expired_token(monkeypatch):
+    def _fake_get(url, *, params=None, headers=None, timeout=None):
+        if params and params.get("id_token") == "expired-id-token":
+            return _FakeResponse(
+                200,
+                {
+                    "iss": "accounts.google.com",
+                    "aud": "web-client-id",
+                    "exp": str(int(time.time()) - 60),
+                    "email": "person@example.com",
+                    "email_verified": "true",
+                },
+            )
+        raise AssertionError("unexpected request")
+
+    monkeypatch.setattr(google_oauth.httpx, "get", _fake_get)
+
+    with pytest.raises(ValueError, match="Google token has expired"):
+        google_oauth.verify_google_id_token("expired-id-token")

@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-import httpx
+from api.core.http_client import get_http_client
 
 
 def check_ollama_readiness(base_url: str, timeout_seconds: int = 3) -> tuple[bool, str]:
     normalized_base_url = base_url.rstrip("/")
     try:
-        with httpx.Client(timeout=float(max(1, timeout_seconds))) as client:
-            response = client.get(f"{normalized_base_url}/api/tags")
-            response.raise_for_status()
+        client = get_http_client(float(max(1, timeout_seconds)))
+        response = client.get(f"{normalized_base_url}/api/tags")
+        response.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         return False, str(exc)
     return True, "ok"
@@ -45,10 +45,10 @@ class OllamaGenerator:
             },
         }
 
-        with httpx.Client(timeout=float(self.timeout_seconds)) as client:
-            response = client.post(f"{self.base_url}/api/generate", json=payload)
-            response.raise_for_status()
-            body = response.json()
+        client = get_http_client(float(self.timeout_seconds))
+        response = client.post(f"{self.base_url}/api/generate", json=payload)
+        response.raise_for_status()
+        body = response.json()
 
         if not isinstance(body, dict):
             raise ValueError("Unexpected Ollama response payload")

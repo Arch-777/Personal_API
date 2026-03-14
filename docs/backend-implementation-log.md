@@ -278,6 +278,24 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Sample persisted rows confirmed (`type=track`, play-based `source_id`).
 - Next:
   - Use POST /v1/connectors/spotify/sync for subsequent incremental syncs.
+
+## Step 46 - High-Impact Backend Performance Pass (Low-Risk)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/core/http_client.py: Added shared synchronous HTTP client registry with keep-alive connection reuse.
+  - backend/api/routers/auth.py: Replaced per-request Google token exchange client creation with shared client usage.
+  - backend/api/routers/connectors.py: Replaced repeated OAuth/profile per-request client creation (GitHub/Google/Notion/Spotify/Slack flows) with shared client usage.
+  - backend/rag/generator.py: Reused shared client for Ollama readiness and generation calls.
+  - backend/workers/connector_sync.py:
+    - Replaced per-call client creation in provider fetch and token refresh helpers with shared client usage.
+    - Removed duplicate post-upsert enqueue of embedding pipeline after inline indexing to avoid redundant work.
+  - backend/api/core/google_oauth.py: Kept direct httpx.get behavior to preserve existing test monkeypatch compatibility.
+- Verification:
+  - Focused regression tests passed: 45 passed in 2.04s.
+  - Command used (from backend/): `PYTHONPATH=. pytest tests/test_google_oauth.py tests/test_auth_google.py tests/test_celery_foundation.py -q`
+- Next:
+  - Optional next low-risk optimization: add configurable SQLAlchemy pool sizing/timeouts in config and tune per environment.
   - Optional: run sync via Celery worker process (not direct function invocation) for production-like execution.
 
 ## Step 17 - Development Fallback Policy (Production Redis Enforcement)
@@ -562,6 +580,89 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Verification:
   - `py -3 -m pytest tests/test_normalizers.py tests/test_api.py -q` → 34 passed.
 
+## Step 35 - User-Controlled Integration Auto-Sync Toggle
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/schemas/connector.py:
+    - Added `ConnectorAutoSyncUpdateRequest` and `ConnectorAutoSyncResponse` schemas.
+  - backend/api/routers/connectors.py:
+    - Added `PATCH /v1/connectors/{platform}/auto-sync` to let users enable/disable periodic auto-sync.
+    - Added optional `cascade_google=true` behavior so toggling one Google platform can apply to `gmail`, `drive`, and `gcal` together.
+    - Persists preference at connector level via `metadata.auto_sync_enabled`.
+  - backend/workers/auto_sync_worker.py:
+    - Updated periodic dispatcher to skip connectors where `metadata.auto_sync_enabled=false`.
+  - backend/tests/test_api.py:
+    - Added coverage for single-platform toggle and Google cascade toggle behavior.
+- Verification:
+  - Code-level validation completed for router, worker, and schema integration.
+- Next:
+  - Run targeted tests in backend runtime environment:
+    - `py -3 -m pytest tests/test_api.py tests/test_celery_foundation.py -q`
+  - Frontend can now call the new toggle endpoint from integration settings UI.
+
+## Step 36 - Google Callback Duplicate Connector Insert Fix (GCAL UniqueViolation)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/connectors.py:
+    - Fixed duplicate upsert path in `google_callback`.
+    - Removed the extra pre-loop `_ensure_google_connector_row` call and now upserts each Google platform exactly once in the sibling loop.
+    - Prevents duplicate pending inserts for the same `(user_id, platform)` in one transaction.
+  - backend/tests/test_api.py:
+    - Added regression test `test_google_callback_upserts_each_google_platform_once`.
+    - Verifies callback performs exactly one upsert per Google platform (`gmail`, `drive`, `gcal`).
+- Verification:
+  - Targeted tests passed for API + Celery foundations after fix.
+- Next:
+  - Redeploy API service and retry Google callback flow for GCAL.
+
+## Step 37 - Worker + Data Fetch Exception Handling Hardening
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/workers/connector_sync.py:
+    - Added non-retryable validation for malformed task IDs (`connector_id`, `user_id`).
+    - Hardened Google/Spotify token refresh handling with explicit `HTTPStatusError` mapping for auth failures (`400/401/403`) to `NonRetryableSyncError`.
+    - Improved `_http_get_json` and `_http_post_json` to handle:
+      - network/request exceptions (`httpx.RequestError`) with clear context,
+      - invalid JSON payload responses with explicit parse errors,
+      - provider auth failures consistently via a shared classifier for Google/Spotify/Slack/Notion (`401/403`).
+    - Updated Slack API error handling to classify auth/scope failures (`invalid_auth`, `token_revoked`, `missing_scope`, `not_authed`, `account_inactive`) as non-retryable.
+  - backend/workers/file_watcher_worker.py:
+    - Added guarded task dispatch with structured logging on enqueue failure.
+  - backend/workers/embedding_worker.py:
+    - Added non-retryable validation for malformed UUID task inputs.
+    - Converted missing-item case to `NonRetryableSyncError`.
+    - Added task-level exception logging with item/user context before re-raising.
+- Verification:
+  - Targeted regression tests passed:
+    - `py -3 -m pytest tests/test_api.py tests/test_celery_foundation.py -q` -> 62 passed.
+- Next:
+  - Redeploy workers and API so updated exception handling behavior is active in runtime.
+
+## Step 38 - API Key Expiration Logic (expires_at)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/developer.py:
+    - Added expiration inputs to API key creation:
+      - `expires_in_days` (1..3650)
+      - `expires_at` (absolute datetime)
+    - Added request validation to prevent sending both fields at once.
+    - Added future-time validation for `expires_at`.
+    - API key create response now includes persisted `expires_at`.
+  - backend/mcp/server.py:
+    - Enforced expiration during developer key authentication.
+    - Expired keys are now rejected in `_resolve_user` with 401.
+  - backend/tests/test_api.py:
+    - Added test that `expires_in_days` sets `expires_at`.
+    - Added test that MCP key resolution rejects expired keys.
+- Verification:
+  - Targeted tests passed after implementation.
+- Next:
+  - Frontend can expose expiration presets (e.g., 7/30/90 days) when creating developer API keys.
+
 ## Step 33 - Integration Management: Disconnect Endpoint
 - Status: Completed
 - Date: 2026-03-14
@@ -598,6 +699,45 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Targeted tests passed: `py -3 -m pytest tests/test_api.py tests/test_rag.py -q` -> 31 passed.
 - Next:
   - After setting RAG env vars in production, call `/health/llm` to verify Ollama connectivity before relying on LLM-backed chat answers.
+
+## Step 47 - Google OAuth Expiry Validation + Subject Claim
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/core/google_oauth.py:
+    - Added token-expiry validation for Google token payloads using `exp` and `expires_in` claims.
+    - Added optional `sub` extraction and included it in verified identity payloads.
+    - Applied expiry checks on both ID-token and access-token verification paths.
+  - backend/tests/test_google_oauth.py:
+    - Updated existing assertions to validate `sub` is returned when available.
+    - Added expiry fields to mocked token payloads.
+    - Added regression test for expired token rejection.
+- Verification:
+  - Targeted tests passed for Google OAuth-related suite and auth foundations.
+- Next:
+  - Optional: persist Google `sub` on the user model for immutable provider-account linking and safer email-change handling.
+
+## Step 48 - Postman Collection Endpoint Coverage Refactor
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added missing platform diagnostic endpoints:
+      - `GET /health/llm`
+      - `GET /openapi.json`
+      - `GET /docs`
+      - `GET /docs/oauth2-redirect`
+      - `GET /redoc`
+    - Added missing connector endpoint:
+      - `PATCH /v1/connectors/{platform}/auto-sync` as `Connector - Toggle Auto Sync`.
+    - Added collection variables for auto-sync toggling:
+      - `autoSyncEnabled`
+      - `cascadeGoogle`
+- Verification:
+  - Programmatic endpoint parity check against live FastAPI routes reports full coverage.
+  - Result: `Missing count: 0`.
+- Next:
+  - Optional: prune duplicate connector shortcut requests if you want a leaner collection focused only on canonical generic endpoints.
 
 ## Integration Contract Notes for Person 2
 
@@ -1136,3 +1276,18 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Use the two new MCP Unified requests as the preferred OpenClaw/client integration path.
   - Keep legacy `/mcp/tools/*` requests for backward compatibility during transition.
+
+## Step 45 - Env Example Cleanup for Auto-Sync Defaults
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/.env.example:
+    - Removed optional auto-sync tuning variables:
+      - `AUTO_SYNC_DISPATCH_INTERVAL_SECONDS`
+      - `AUTO_SYNC_STALE_AFTER_MINUTES`
+      - `AUTO_SYNC_BATCH_SIZE`
+    - Kept `AUTO_SYNC_ENABLED` as the single explicit auto-sync toggle in the env example.
+- Verification:
+  - Manual config review confirms removed keys are optional because defaults are defined in `api/core/config.py`.
+- Next:
+  - If runtime tuning is needed, set the removed variables explicitly in deployment-specific env files.

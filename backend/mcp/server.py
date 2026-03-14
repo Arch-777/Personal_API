@@ -65,12 +65,14 @@ def _resolve_user(api_key_header: str) -> tuple[uuid.UUID, Session]:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API key")
 
     key_hash = _hash_key(raw_key)
+    now = datetime.now(UTC)
     db = SessionLocal()
     try:
         row = db.execute(
             select(ApiKey).where(
                 ApiKey.key_hash == key_hash,
                 ApiKey.revoked_at.is_(None),
+                or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > now),
             )
         ).scalar_one_or_none()
     except Exception:
@@ -79,7 +81,11 @@ def _resolve_user(api_key_header: str) -> tuple[uuid.UUID, Session]:
 
     if row is None:
         db.close()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or revoked API key")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid, revoked, or expired API key")
+
+    if row.expires_at is not None and row.expires_at <= now:
+        db.close()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Expired API key")
 
     # Update last_used_at
     row.last_used_at = datetime.now(UTC)

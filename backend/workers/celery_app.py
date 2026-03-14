@@ -109,6 +109,7 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=[
+        "workers.auto_sync_worker",
         "workers.google_worker",
         "workers.github_worker",
         "workers.notion_worker",
@@ -135,6 +136,12 @@ celery_app.conf.update(
     enable_utc=True,
     result_expires=3600,
     broker_connection_retry_on_startup=True,
+    beat_schedule={
+        "auto-sync-connected-integrations": {
+            "task": "workers.auto_sync_worker.dispatch_auto_sync",
+            "schedule": settings.auto_sync_dispatch_interval_seconds,
+        }
+    },
 )
 
 celery_app.Task = ResilientTask

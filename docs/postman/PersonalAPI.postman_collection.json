@@ -193,6 +193,18 @@
       "type": "string"
     },
     {
+      "key": "autoSyncEnabled",
+      "value": "true",
+      "type": "string",
+      "description": "Boolean string for PATCH /connectors/{platform}/auto-sync"
+    },
+    {
+      "key": "cascadeGoogle",
+      "value": "false",
+      "type": "string",
+      "description": "Set true to apply Google auto-sync toggle to gmail/drive/gcal together"
+    },
+    {
       "key": "notionToken",
       "value": "",
       "type": "string",
@@ -286,6 +298,86 @@
               }
             }
           ]
+        },
+        {
+          "name": "LLM Health Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/llm",
+              "host": ["{{baseUrl}}"],
+              "path": ["health", "llm"]
+            },
+            "description": "Checks Ollama/LLM readiness status exposed by the backend."
+          }
+        },
+        {
+          "name": "OpenAPI Schema",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openapi.json",
+              "host": ["{{baseUrl}}"],
+              "path": ["openapi.json"]
+            },
+            "description": "Returns OpenAPI JSON for contract inspection and tool import."
+          }
+        },
+        {
+          "name": "Swagger Docs",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/docs",
+              "host": ["{{baseUrl}}"],
+              "path": ["docs"]
+            },
+            "description": "FastAPI Swagger UI endpoint."
+          }
+        },
+        {
+          "name": "Swagger OAuth Redirect",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/docs/oauth2-redirect",
+              "host": ["{{baseUrl}}"],
+              "path": ["docs", "oauth2-redirect"]
+            },
+            "description": "FastAPI Swagger OAuth redirect helper route."
+          }
+        },
+        {
+          "name": "ReDoc",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/redoc",
+              "host": ["{{baseUrl}}"],
+              "path": ["redoc"]
+            },
+            "description": "FastAPI ReDoc documentation endpoint."
+          }
         }
       ]
     },
@@ -1919,6 +2011,49 @@
             },
             "description": "Queues sync for selected connector platform."
           }
+        },
+        {
+          "name": "Connector - Toggle Auto Sync",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": {{autoSyncEnabled}},\n  \"cascade_google\": {{cascadeGoogle}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/{{connectorPlatform}}/auto-sync",
+              "host": ["{{baseUrl}}"],
+              "path": [
+                "{{apiPrefix}}",
+                "connectors",
+                "{{connectorPlatform}}",
+                "auto-sync"
+              ]
+            },
+            "description": "Enables/disables periodic auto sync for a connector platform."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Auto-sync response shape', function () {",
+                  "  pm.expect(body).to.have.property('platform');",
+                  "  pm.expect(body).to.have.property('auto_sync_enabled');",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Gmail - Trigger Sync",

@@ -25,6 +25,7 @@ def _import_celery_app():
             QUEUE_DEFAULT,
             QUEUE_EMBEDDING,
             QUEUE_FILE_WATCHER,
+            QUEUE_GITHUB,
             QUEUE_GOOGLE,
             QUEUE_NOTION,
             QUEUE_SLACK,
@@ -40,6 +41,7 @@ def _import_celery_app():
         ping,
         ALL_QUEUES,
         QUEUE_DEFAULT,
+        QUEUE_GITHUB,
         QUEUE_GOOGLE,
         QUEUE_NOTION,
         QUEUE_SLACK,
@@ -56,18 +58,19 @@ def _import_celery_app():
 
 class TestQueueConstants:
     def test_queue_names_are_strings(self):
-        (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GOOGLE,
+        (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
          QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
 
         for name in ALL_QUEUES:
             assert isinstance(name, str) and name, f"Expected non-empty string, got {name!r}"
 
     def test_all_queues_contains_all_expected_names(self):
-        (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GOOGLE,
+        (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
          QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
 
         expected = {
             QUEUE_DEFAULT,
+            QUEUE_GITHUB,
             QUEUE_GOOGLE,
             QUEUE_NOTION,
             QUEUE_SLACK,
@@ -82,10 +85,11 @@ class TestQueueConstants:
         assert len(ALL_QUEUES) == len(set(ALL_QUEUES)), "Duplicate queue names detected"
 
     def test_specific_queue_name_values(self):
-        (_, _, _, _, QUEUE_DEFAULT, QUEUE_GOOGLE,
+        (_, _, _, _, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
          QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
 
         assert QUEUE_DEFAULT == "default"
+        assert QUEUE_GITHUB == "connector.github"
         assert QUEUE_GOOGLE == "connector.google"
         assert QUEUE_NOTION == "connector.notion"
         assert QUEUE_SLACK == "connector.slack"
@@ -103,6 +107,7 @@ class TestTaskRoutes:
         (*_, TASK_ROUTES) = _import_celery_app()
 
         expected_prefixes = [
+            "workers.github_worker.*",
             "workers.google_worker.*",
             "workers.notion_worker.*",
             "workers.slack_worker.*",
@@ -114,9 +119,10 @@ class TestTaskRoutes:
             assert prefix in TASK_ROUTES, f"Missing route for {prefix}"
 
     def test_routes_map_to_correct_queues(self):
-        (_, _, _, _, QUEUE_DEFAULT, QUEUE_GOOGLE,
+        (_, _, _, _, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
          QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, TASK_ROUTES) = _import_celery_app()
 
+        assert TASK_ROUTES["workers.github_worker.*"]["queue"] == QUEUE_GITHUB
         assert TASK_ROUTES["workers.google_worker.*"]["queue"] == QUEUE_GOOGLE
         assert TASK_ROUTES["workers.notion_worker.*"]["queue"] == QUEUE_NOTION
         assert TASK_ROUTES["workers.slack_worker.*"]["queue"] == QUEUE_SLACK
@@ -362,6 +368,8 @@ class TestPingTask:
 
 class TestWorkerIncludes:
     EXPECTED_INCLUDES = [
+        "workers.auto_sync_worker",
+        "workers.github_worker",
         "workers.google_worker",
         "workers.notion_worker",
         "workers.slack_worker",
@@ -379,3 +387,12 @@ class TestWorkerIncludes:
         (celery_app, *_rest) = _import_celery_app()
         extra = set(celery_app.conf.include) - set(self.EXPECTED_INCLUDES)
         assert not extra, f"Unexpected worker modules in include list: {extra}"
+
+
+class TestBeatSchedule:
+    def test_auto_sync_task_scheduled(self):
+        (celery_app, *_rest) = _import_celery_app()
+        schedule = celery_app.conf.beat_schedule
+        assert "auto-sync-connected-integrations" in schedule
+        entry = schedule["auto-sync-connected-integrations"]
+        assert entry["task"] == "workers.auto_sync_worker.dispatch_auto_sync"
