@@ -58,7 +58,7 @@ export const useSendMessage = () => {
       const { data } = await apiClient.post('/v1/chat/message', payload);
       return data;
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (data) => {
       // Invalidate chat history to trigger refresh
       const sessionId = data.session_id;
       if (sessionId) {

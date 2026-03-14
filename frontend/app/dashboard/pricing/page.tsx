@@ -12,57 +12,37 @@ import {
 export default function PricingPage() {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Pricing &amp; Plans</h1>
+      <h1 className="text-2xl font-bold">Pricing</h1>
 
-      <div className="grid gap-6 md:grid-cols-3 pt-6">
-        {/* Free Plan */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">Free</CardTitle>
-            <CardDescription>
-              <span className="text-3xl font-bold text-foreground">$0</span>
-              <span className="text-sm">/mo</span>
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+      <Card className="relative overflow-hidden pt-2">
+        <Badge className="absolute top-0 right-0 rounded-none rounded-bl-lg">
+          PAY-AS-YOU-GO
+        </Badge>
+        <CardHeader>
+          <CardTitle className="text-xl">Pay-as-you-go metered billing</CardTitle>
+          <CardDescription>
+            Bill only usage each month with no plan lock-in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <p className="text-sm font-medium mb-2">Meter on:</p>
             <ul className="space-y-2 text-sm">
-              <li>– 3 Integrations</li>
-              <li>– 1,000 Documents</li>
-              <li>– Basic Search</li>
+              <li>- Tokens processed</li>
+              <li>- Search queries</li>
+              <li>- Connector sync jobs</li>
+              <li>- Storage GB</li>
             </ul>
-          </CardContent>
-          <CardFooter>
-            <Button variant="secondary" className="w-full">
-              Current Plan
-            </Button>
-          </CardFooter>
-        </Card>
+          </div>
 
-        {/* Pro Plan */}
-        <Card className="border-2 border-primary relative overflow-hidden">
-          <Badge className="absolute top-0 right-0 rounded-none rounded-bl-lg">
-            POPULAR
-          </Badge>
-          <CardHeader>
-            <CardTitle className="text-xl">Pro</CardTitle>
-            <CardDescription>
-              <span className="text-3xl font-bold text-foreground">$20</span>
-              <span className="text-sm">/mo</span>
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 text-sm">
-              <li>– Unlimited Integrations</li>
-              <li>– 50,000 Documents</li>
-              <li>– RAG AI Chat</li>
-              <li>– Priority Support</li>
-            </ul>
-          </CardContent>
-          <CardFooter>
-            <Button className="w-full">Upgrade</Button>
-          </CardFooter>
-        </Card>
-      </div>
+          <p className="text-sm text-muted-foreground">
+            Why it fits: easiest &ldquo;fair pricing&rdquo; story vs competitors.
+          </p>
+        </CardContent>
+        <CardFooter>
+          <Button className="w-full">Contact Sales</Button>
+        </CardFooter>
+      </Card>
     </div>
   );
 }

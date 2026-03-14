@@ -3,17 +3,18 @@
 import { ModeToggle } from "@/components/mode-toggle";
 import { useLogout, useUser } from "@/hooks/use-auth";
 import {
-    ChevronRight,
-    ChevronsUpDown,
-    CreditCard,
-    HelpCircle,
-    Home,
-    Key,
-    LogOut,
-    Plug,
-    Search,
-    Settings,
-    User,
+  ChevronRight,
+  ChevronsUpDown,
+  CreditCard,
+  HelpCircle,
+  Home,
+  Key,
+  LogOut,
+  Plug,
+  Search,
+  Settings,
+  Terminal,
+  User,
 } from "lucide-react";
   import Image from "next/image";
 import Link from "next/link";
@@ -22,47 +23,47 @@ import * as React from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
-    Breadcrumb,
-    BreadcrumbItem,
-    BreadcrumbLink,
-    BreadcrumbList,
-    BreadcrumbPage,
-    BreadcrumbSeparator,
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import {
-    Collapsible,
-    CollapsibleContent,
-    CollapsibleTrigger,
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuGroup,
-    DropdownMenuItem,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
-    Sidebar,
-    SidebarContent,
-    SidebarFooter,
-    SidebarGroup,
-    SidebarGroupContent,
-    SidebarGroupLabel,
-    SidebarHeader,
-    SidebarInset,
-    SidebarMenu,
-    SidebarMenuButton,
-    SidebarMenuItem,
-    SidebarMenuSub,
-    SidebarMenuSubButton,
-    SidebarMenuSubItem,
-    SidebarProvider,
-    SidebarRail,
-    SidebarTrigger,
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 
@@ -123,6 +124,7 @@ const sidebarData: SidebarData = {
       defaultOpen: true,
       items: [
         { label: "API & Tokens", icon: Key, href: "/dashboard/api-keys" },
+        { label: "How to use MCP", icon: Terminal, href: "/dashboard/mcp" },
         {
           label: "Pricing & Plans",
           icon: CreditCard,
@@ -153,6 +155,7 @@ const breadcrumbMap: Record<string, { group: string; page: string }> = {
   "/dashboard/search": { group: "Overview", page: "Search & Chat" },
   "/dashboard/integrations": { group: "Overview", page: "Integrations" },
   "/dashboard/api-keys": { group: "Settings", page: "API & Tokens" },
+  "/dashboard/mcp": { group: "Settings", page: "How to use MCP" },
   "/dashboard/pricing": { group: "Settings", page: "Pricing & Plans" },
   "/dashboard/settings": { group: "Settings", page: "Profile" },
 };

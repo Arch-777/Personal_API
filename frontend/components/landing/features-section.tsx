@@ -1,8 +1,7 @@
 "use client";
 
-import { Search, MessageSquare, ShieldCheck, ChevronRight } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { useScrollReveal } from "@/hooks/use-scroll-reveal";
+import { ChevronRight, MessageSquare, Search, ShieldCheck } from "lucide-react";
 import { useTheme } from "next-themes";
 import { IntegrationsCarousel } from "./integrations-carousel";
 
@@ -81,7 +80,6 @@ export function FeaturesSection() {
   const ref1 = useScrollReveal();
   const ref2 = useScrollReveal();
   const ref3 = useScrollReveal();
-  const calloutRef = useScrollReveal();
 
   const refs = [ref1, ref2, ref3];
 

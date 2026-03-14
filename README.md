@@ -1,53 +1,33 @@
 # PersonalAPI
 
-PersonalAPI is a full-stack personal knowledge platform that connects personal SaaS accounts, normalizes the data into a unified schema, indexes it for retrieval, and exposes that data through REST APIs, chat workflows, WebSocket notifications, and an MCP-compatible tool server.
+PersonalAPI is a full-stack personal knowledge platform that connects external services (Google, GitHub, Notion, Spotify, Slack), normalizes incoming data, indexes it for retrieval, and serves grounded responses through REST APIs, chat, WebSocket notifications, and MCP tools.
 
-The system is built for one core use case: take fragmented personal data from multiple services, keep it user-scoped, make it searchable, and return grounded results that can be consumed by both humans and AI clients.
+## Collaborators
 
-## Table of Contents
+- anshjadhav
+- nishantpatil
+- pratik
 
-- [Overview](#overview)
-- [Core Capabilities](#core-capabilities)
-- [Architecture](#architecture)
-- [Repository Layout](#repository-layout)
-- [Technology Stack](#technology-stack)
-- [Runtime Components](#runtime-components)
-- [Supported Integrations](#supported-integrations)
-- [API Surface](#api-surface)
-- [Data Model](#data-model)
-- [Environment Configuration](#environment-configuration)
-- [Local Development](#local-development)
-- [Docker Deployment](#docker-deployment)
-- [Testing and Verification](#testing-and-verification)
-- [Operational Notes](#operational-notes)
-- [Production Readiness Checklist](#production-readiness-checklist)
-- [Troubleshooting](#troubleshooting)
-- [Documentation](#documentation)
-- [Contributors](#contributors)
+## What This Project Solves
 
-## Overview
+Personal data lives in many apps. PersonalAPI unifies those apps into one searchable and chat-ready knowledge layer.
 
-PersonalAPI brings together data from services such as Google, GitHub, Notion, Spotify, and Slack into a single backend contract. The backend stores normalized records, tracks connector state, builds retrieval-ready chunks, and exposes the result through a dashboard-oriented API and AI-friendly MCP interface.
+Core capabilities:
+- Multi-source connector ingestion (OAuth + token-based)
+- Unified item model across services
+- Queue-based sync and indexing pipelines
+- Search and chat APIs with source citations
+- Developer API key system
+- MCP tool server for external AI clients
 
-The repository includes:
+## Tech Stack
 
-- A FastAPI backend for auth, connectors, search, chat, WebSocket updates, and developer APIs.
-- Celery workers for sync, normalization, file watching, embedding, and scheduled dispatch.
-- A Next.js frontend dashboard.
-- An MCP FastAPI sub-application mounted under the backend.
-- SQL migrations, tests, and implementation documentation.
+- Backend: FastAPI, SQLAlchemy, PostgreSQL (pgvector + pg_trgm), Redis, Celery
+- Frontend: Next.js, React, TanStack Query, Axios
+- Retrieval: chunking + embedding + hybrid retrieval + answer generation
+- Messaging: WebSocket user-scoped sync notifications
 
-## Core Capabilities
-
-- Multi-source ingestion with OAuth and token-based connector flows.
-- User-scoped normalization into shared relational tables.
-- Search and retrieval backed by PostgreSQL, pg_trgm, and pgvector.
-- Chat sessions with stored conversation history and grounded sources.
-- Developer API key lifecycle management.
-- Real-time sync notifications over WebSocket.
-- MCP tools for external AI agents.
-
-## Architecture
+## Architecture Snapshot
 
 ```mermaid
 flowchart LR

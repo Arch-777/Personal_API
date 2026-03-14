@@ -1,19 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { apiClient } from "@/lib/api-client";
-import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -24,8 +13,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { CopyIcon, CheckIcon, PlusIcon, Loader2Icon, KeyIcon, AlertTriangleIcon } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -33,6 +20,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { apiClient } from "@/lib/api-client";
+import { AlertTriangleIcon, CheckIcon, CopyIcon, KeyIcon, Loader2Icon, PlusIcon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { toast } from "sonner";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -57,8 +56,6 @@ interface ApiKeyCreateResponse extends ApiKeyListItem {
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
-
-const CHANNEL_OPTIONS = ["mcp", "agent", "web"] as const;
 
 const EXPIRATION_OPTIONS = [
   { label: "1 month", value: "1 month", days: 30 },
@@ -113,6 +110,7 @@ export default function ApiKeysPage() {
       setError(null);
       const { data } = await apiClient.get<ApiKeyListItem[]>("/v1/developer/api-keys");
       setKeys(data.filter((k) => !k.revoked_at));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       if (err?.response?.status === 401) {
         setError("session_expired");
@@ -146,6 +144,7 @@ export default function ApiKeysPage() {
       setNewKey(data.api_key);
       toast.success("API key created successfully");
       fetchKeys();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       const msg = err?.response?.data?.detail || "Failed to create API key";
       toast.error(msg);
@@ -161,6 +160,7 @@ export default function ApiKeysPage() {
       await apiClient.post(`/v1/developer/api-keys/${id}/revoke`);
       toast.success("API key revoked");
       setKeys((prev) => prev.filter((k) => k.id !== id));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       const msg = err?.response?.data?.detail || "Failed to revoke API key";
       toast.error(msg);
@@ -184,13 +184,6 @@ export default function ApiKeysPage() {
     setExpiresIn("1 year");
     setNewKey(null);
     setCopied(false);
-  };
-
-  /* ---- Channel toggle ---- */
-  const toggleChannel = (ch: string) => {
-    setChannels((prev) =>
-      prev.includes(ch) ? prev.filter((c) => c !== ch) : [...prev, ch]
-    );
   };
 
   /* ---- Format date ---- */

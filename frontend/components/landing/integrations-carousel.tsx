@@ -1,8 +1,5 @@
 'use client'
 
-import { useTheme } from 'next-themes'
-import { useScrollReveal } from '@/hooks/use-scroll-reveal'
-
 // Plain names — NO emoji prefix, NO ✦
 const tickerItems = [
   'NOTION', 'SLACK', 'GMAIL',
@@ -10,8 +7,6 @@ const tickerItems = [
 ]
 
 export function IntegrationsCarousel() {
-  const { resolvedTheme } = useTheme()
-  const isDark = resolvedTheme === 'dark'
 
   return (
     <>
