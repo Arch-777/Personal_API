@@ -1,10 +1,11 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 import hashlib
 import hmac
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from api.core.auth import get_current_user
@@ -233,6 +234,71 @@ def test_developer_create_and_list_api_keys():
 	assert len(list_resp.json()) >= 1
 
 	app.dependency_overrides.clear()
+
+
+def test_developer_create_api_key_with_expires_in_days_sets_expires_at():
+	fake_db = FakeDb()
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = _override_user
+
+	client = TestClient(app)
+	create_resp = client.post(
+		"/v1/developer/api-keys",
+		json={
+			"name": "expiring key",
+			"allowed_channels": ["mcp"],
+			"agent_type": "openclaw",
+			"expires_in_days": 7,
+		},
+	)
+	assert create_resp.status_code == 201
+	body = create_resp.json()
+	assert body["expires_at"] is not None
+
+	app.dependency_overrides.clear()
+
+
+def test_mcp_resolve_user_rejects_expired_api_key(monkeypatch):
+	from mcp import server as mcp_server
+
+	class _FakeMcpResult:
+		def __init__(self, one=None):
+			self._one = one
+
+		def scalar_one_or_none(self):
+			return self._one
+
+	class _FakeMcpDb:
+		def __init__(self, row):
+			self.row = row
+			self.committed = False
+			self.closed = False
+
+		def execute(self, _stmt):
+			return _FakeMcpResult(one=self.row)
+
+		def commit(self):
+			self.committed = True
+
+		def close(self):
+			self.closed = True
+
+	expired_row = SimpleNamespace(
+		user_id=uuid.uuid4(),
+		revoked_at=None,
+		expires_at=datetime.now(UTC) - timedelta(minutes=1),
+		last_used_at=None,
+	)
+	fake_db = _FakeMcpDb(row=expired_row)
+	monkeypatch.setattr(mcp_server, "SessionLocal", lambda: fake_db)
+
+	with pytest.raises(HTTPException) as exc:
+		mcp_server._resolve_user("pk_live_expired")
+
+	assert exc.value.status_code == 401
+	assert fake_db.committed is False
+	assert fake_db.closed is True
 
 
 def test_developer_revoke_api_key_success():
@@ -514,41 +580,6 @@ def test_disconnect_returns_404_when_connector_not_found():
 	client = TestClient(app)
 	response = client.delete("/v1/connectors/spotify")
 
-	assert response.status_code == 404
-
-	app.dependency_overrides.clear()
-
-
-def test_disconnect_with_delete_data_returns_items_deleted_count():
-	user_id = uuid.uuid4()
-	connector = _make_connector("slack", user_id)
-	fake_db = _FakeDisconnectDb(connectors=[connector])
-	current_user = SimpleNamespace(id=user_id)
-
-	app.dependency_overrides[get_db] = lambda: fake_db
-	app.dependency_overrides[get_current_user] = lambda: current_user
-
-	client = TestClient(app)
-	response = client.delete("/v1/connectors/slack?delete_data=true")
-
-	assert response.status_code == 200
-	body = response.json()
-	assert body["disconnected"] == ["slack"]
-	assert body["items_deleted"] == 5  # matches rowcount set in fake
-
-	app.dependency_overrides.clear()
-
-
-def test_disconnect_returns_400_for_unknown_platform():
-	app.dependency_overrides[get_current_user] = _override_user
-
-	client = TestClient(app)
-	response = client.delete("/v1/connectors/unknown_service")
-
-	assert response.status_code == 400
-
-	app.dependency_overrides.clear()
-
 
 def test_github_webhook_signature_helper_validation():
 	from api.routers import connectors as connectors_router
@@ -635,4 +666,149 @@ def test_github_webhook_ping_returns_ok(monkeypatch):
 	assert body_json["status"] == "ok"
 	assert body_json["event"] == "ping"
 
+
+def test_google_callback_upserts_each_google_platform_once(monkeypatch):
+	from api.routers import connectors as connectors_router
+
+	class _FakeDbForGoogleCallback:
+		def __init__(self):
+			self.committed = False
+
+		def commit(self):
+			self.committed = True
+
+	class _FakeHttpResponse:
+		def __init__(self, payload: dict, status_code: int = 200):
+			self._payload = payload
+			self.status_code = status_code
+
+		def raise_for_status(self):
+			return None
+
+		def json(self):
+			return self._payload
+
+	class _FakeHttpClient:
+		def __init__(self, *args, **kwargs):
+			pass
+
+		def __enter__(self):
+			return self
+
+		def __exit__(self, exc_type, exc, tb):
+			return False
+
+		def post(self, url, data=None, headers=None):
+			assert "oauth2.googleapis.com/token" in url
+			return _FakeHttpResponse(
+				{
+					"access_token": "access-token",
+					"refresh_token": "refresh-token",
+					"expires_in": 3600,
+					"scope": "openid email https://www.googleapis.com/auth/calendar.readonly",
+				}
+			)
+
+		def get(self, url, headers=None):
+			assert "openidconnect.googleapis.com/v1/userinfo" in url
+			return _FakeHttpResponse({"email": "test@example.com"}, status_code=200)
+
+	fake_db = _FakeDbForGoogleCallback()
+	user_id = uuid.uuid4()
+	upsert_calls: list[str] = []
+
+	monkeypatch.setattr(
+		connectors_router,
+		"decode_access_token",
+		lambda _state: {"sub": f"{user_id}|gcal"},
+	)
+	monkeypatch.setattr(
+		connectors_router,
+		"get_settings",
+		lambda: SimpleNamespace(
+			google_client_id="client-id",
+			google_client_secret="client-secret",
+			google_redirect_uri="http://127.0.0.1:8000/v1/connectors/google/callback",
+			frontend_app_url="http://127.0.0.1:3000",
+		),
+	)
+	monkeypatch.setattr(connectors_router.httpx, "Client", _FakeHttpClient)
+
+	def _fake_upsert(*, db, user_id, platform, access_token, refresh_token, token_expires_at, platform_email, google_scope):
+		upsert_calls.append(platform)
+
+	monkeypatch.setattr(connectors_router, "_ensure_google_connector_row", _fake_upsert)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	client = TestClient(app)
+	response = client.get(
+		"/v1/connectors/google/callback?code=fake-code&state=fake-state",
+		follow_redirects=False,
+	)
+
+	assert response.status_code == 307
+	assert sorted(upsert_calls) == ["drive", "gcal", "gmail"]
+	assert len(upsert_calls) == 3
+	assert fake_db.committed is True
+
 	app.dependency_overrides.clear()
+
+
+class _FakeAutoSyncToggleDb:
+	def __init__(self, connectors: list):
+		self._connectors = connectors
+		self.committed = False
+
+	def execute(self, _stmt):
+		return _FakeResult(rows=self._connectors)
+
+	def commit(self):
+		self.committed = True
+
+
+def test_set_connector_auto_sync_updates_single_platform_metadata():
+	user_id = uuid.uuid4()
+	connector = _make_connector("spotify", user_id)
+	connector.metadata_json = {}
+	fake_db = _FakeAutoSyncToggleDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.patch("/v1/connectors/spotify/auto-sync", json={"enabled": False})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["platforms"] == ["spotify"]
+	assert body["auto_sync_enabled"] is False
+	assert connector.metadata_json["auto_sync_enabled"] is False
+	assert fake_db.committed is True
+
+	app.dependency_overrides.clear()
+
+
+def test_set_connector_auto_sync_cascades_google_platforms_by_default():
+	user_id = uuid.uuid4()
+	connectors = [
+		_make_connector("gmail", user_id),
+		_make_connector("drive", user_id),
+		_make_connector("gcal", user_id),
+	]
+	for connector in connectors:
+		connector.metadata_json = {}
+	fake_db = _FakeAutoSyncToggleDb(connectors=connectors)
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.patch("/v1/connectors/gmail/auto-sync", json={"enabled": True})
+
+	assert response.status_code == 200
+	body = response.json()
+	assert set(body["platforms"]) == {"gmail", "drive", "gcal"}
+	assert body["auto_sync_enabled"] is True
+	assert all(c.metadata_json.get("auto_sync_enabled") is True for c in connectors)

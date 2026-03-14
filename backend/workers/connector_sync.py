@@ -17,6 +17,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from api.core.config import get_settings
 from api.core.db import SessionLocal
+from api.core.http_client import get_http_client
 from api.models.connector import Connector
 from api.models.item import Item
 from api.models.user import User  # noqa: F401  # Ensure users table metadata is loaded for FK resolution.
@@ -75,8 +76,11 @@ class SyncRunResult:
 
 
 def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: str | None = None) -> dict[str, Any]:
-    parsed_connector_id = uuid.UUID(connector_id)
-    parsed_user_id = uuid.UUID(user_id)
+    try:
+        parsed_connector_id = uuid.UUID(connector_id)
+        parsed_user_id = uuid.UUID(user_id)
+    except (TypeError, ValueError) as exc:
+        raise NonRetryableSyncError("Invalid connector_id or user_id passed to sync task") from exc
 
     _mark_sync_started(parsed_connector_id, parsed_user_id)
     _broadcast(user_id, "sync.started", {"platform": platform, "connector_id": connector_id})
@@ -108,8 +112,6 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             connector.status = "connected"
             connector.error_message = None
             db.commit()
-
-        _enqueue_indexing_tasks(item_ids=upserted_item_ids, user_id=parsed_user_id, source=platform)
 
         _broadcast(user_id, "sync.completed", {
             "platform": platform,
@@ -191,17 +193,25 @@ def _maybe_refresh_spotify_token(db: Any, connector: Connector) -> None:
         f"{settings.spotify_client_id}:{settings.spotify_client_secret}".encode()
     ).decode()
 
-    with httpx.Client(timeout=15.0) as client:
-        response = client.post(
-            "https://accounts.spotify.com/api/token",
-            data={"grant_type": "refresh_token", "refresh_token": refresh_token},
-            headers={
-                "Authorization": f"Basic {credentials}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
+    client = get_http_client(15.0)
+    response = client.post(
+        "https://accounts.spotify.com/api/token",
+        data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
         response.raise_for_status()
-        token_data = response.json()
+    except httpx.HTTPStatusError as exc:
+        if response.status_code in {400, 401, 403}:
+            detail = _extract_http_error_message(response)
+            raise NonRetryableSyncError(
+                f"Spotify token refresh rejected ({response.status_code}): {detail}"
+            ) from exc
+        raise
+    token_data = response.json()
 
     new_access_token = token_data.get("access_token")
     if not new_access_token:
@@ -235,19 +245,27 @@ def _maybe_refresh_google_token(db: Any, connector: Connector) -> None:
     if not refresh_token:
         raise ValueError("Google access token expired and no refresh token is stored")
 
-    with httpx.Client(timeout=15.0) as client:
-        response = client.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
+    client = get_http_client(15.0)
+    response = client.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": settings.google_client_id,
+            "client_secret": settings.google_client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        },
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
+    try:
         response.raise_for_status()
-        token_data = response.json()
+    except httpx.HTTPStatusError as exc:
+        if response.status_code in {400, 401, 403}:
+            detail = _extract_http_error_message(response)
+            raise NonRetryableSyncError(
+                f"Google token refresh rejected ({response.status_code}): {detail}"
+            ) from exc
+        raise
+    token_data = response.json()
 
     new_access_token = token_data.get("access_token")
     if not new_access_token:
@@ -374,18 +392,18 @@ def _fetch_github_records(access_token: str, source_cursor: str | None) -> tuple
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
-        response = client.get("https://api.github.com/user/repos", params=params, headers=headers)
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if response.status_code in {401, 403}:
-                detail = _extract_http_error_message(response)
-                raise NonRetryableSyncError(
-                    f"GitHub API permission/auth error ({response.status_code}) for https://api.github.com/user/repos: {detail}"
-                ) from exc
-            raise
-        payload = response.json()
+    client = get_http_client(HTTP_TIMEOUT_SECONDS)
+    response = client.get("https://api.github.com/user/repos", params=params, headers=headers)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if response.status_code in {401, 403}:
+            detail = _extract_http_error_message(response)
+            raise NonRetryableSyncError(
+                f"GitHub API permission/auth error ({response.status_code}) for https://api.github.com/user/repos: {detail}"
+            ) from exc
+        raise
+    payload = response.json()
 
     if not isinstance(payload, list):
         raise ValueError("Unexpected GitHub repos payload; expected a list")
@@ -856,6 +874,8 @@ def _fetch_slack_user_profile(access_token: str, user_id: str | None, cache: dic
 def _ensure_slack_ok(payload: dict[str, Any], url: str) -> dict[str, Any]:
     if payload.get("ok") is False:
         error_code = payload.get("error") or "unknown_error"
+        if error_code in {"invalid_auth", "token_revoked", "missing_scope", "not_authed", "account_inactive"}:
+            raise NonRetryableSyncError(f"Slack API auth error from {url}: {error_code}")
         raise ValueError(f"Slack API error from {url}: {error_code}")
     return payload
 
@@ -948,23 +968,24 @@ def _http_get_json(
     if headers:
         merged_headers.update(headers)
 
-    with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
+    client = get_http_client(HTTP_TIMEOUT_SECONDS)
+    try:
         response = client.get(url, params=params, headers=merged_headers)
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if "googleapis.com" in url and response.status_code in {401, 403}:
-                detail = _extract_http_error_message(response)
-                raise NonRetryableSyncError(
-                    f"Google API permission/auth error ({response.status_code}) for {url}: {detail}"
-                ) from exc
-            if "api.spotify.com" in url and response.status_code in {401, 403}:
-                detail = _extract_http_error_message(response)
-                raise NonRetryableSyncError(
-                    f"Spotify API permission/auth error ({response.status_code}) for {url}: {detail}"
-                ) from exc
-            raise
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"Network error while fetching {url}: {exc}") from exc
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if _is_nonretryable_provider_auth_error(url, response.status_code):
+            detail = _extract_http_error_message(response)
+            raise NonRetryableSyncError(
+                f"Provider permission/auth error ({response.status_code}) for {url}: {detail}"
+            ) from exc
+        raise
+    try:
         data = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid JSON response from {url}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected response payload type from {url}")
     return data
@@ -984,23 +1005,24 @@ def _http_post_json(
     if headers:
         merged_headers.update(headers)
 
-    with httpx.Client(timeout=HTTP_TIMEOUT_SECONDS) as client:
+    client = get_http_client(HTTP_TIMEOUT_SECONDS)
+    try:
         response = client.post(url, json=json_body, headers=merged_headers)
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            if "googleapis.com" in url and response.status_code in {401, 403}:
-                detail = _extract_http_error_message(response)
-                raise NonRetryableSyncError(
-                    f"Google API permission/auth error ({response.status_code}) for {url}: {detail}"
-                ) from exc
-            if "api.spotify.com" in url and response.status_code in {401, 403}:
-                detail = _extract_http_error_message(response)
-                raise NonRetryableSyncError(
-                    f"Spotify API permission/auth error ({response.status_code}) for {url}: {detail}"
-                ) from exc
-            raise
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"Network error while posting to {url}: {exc}") from exc
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if _is_nonretryable_provider_auth_error(url, response.status_code):
+            detail = _extract_http_error_message(response)
+            raise NonRetryableSyncError(
+                f"Provider permission/auth error ({response.status_code}) for {url}: {detail}"
+            ) from exc
+        raise
+    try:
         data = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid JSON response from {url}") from exc
     if not isinstance(data, dict):
         raise ValueError(f"Unexpected response payload type from {url}")
     return data
@@ -1020,6 +1042,18 @@ def _extract_next_cursor(payload: dict[str, Any], current_cursor: str | None) ->
                 return str(value)
 
     return str(current_cursor or "0")
+
+
+def _is_nonretryable_provider_auth_error(url: str, status_code: int) -> bool:
+    if status_code not in {401, 403}:
+        return False
+    providers = (
+        "googleapis.com",
+        "api.spotify.com",
+        "slack.com/api",
+        "api.notion.com",
+    )
+    return any(provider in url for provider in providers)
 
 
 def _extract_http_error_message(response: httpx.Response) -> str:
@@ -1069,22 +1103,6 @@ def _inline_index_items(db, item_ids: list[uuid.UUID], user_id: uuid.UUID) -> No
             item.metadata_json = metadata
         except Exception:
             logger.exception("Inline indexing failed for item %s", item.id)
-
-
-def _enqueue_indexing_tasks(item_ids: list[uuid.UUID], user_id: uuid.UUID, source: str) -> None:
-    if not item_ids:
-        return
-
-    try:
-        from workers.celery_app import celery_app
-
-        for item_id in item_ids:
-            celery_app.send_task(
-                "workers.file_watcher_worker.watch_file_changes",
-                args=[str(item_id), str(user_id), source],
-            )
-    except Exception:
-        logger.exception("Unable to enqueue post-ingest indexing tasks")
 
 
 def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:

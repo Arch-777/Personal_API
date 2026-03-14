@@ -19,6 +19,10 @@ class Settings(BaseSettings):
 	database_ssl_mode: str = Field(default="prefer")
 	database_connect_timeout: int = Field(default=10)
 	redis_url: str = Field(default="redis://localhost:6379/0")
+	auto_sync_enabled: bool = Field(default=True)
+	auto_sync_dispatch_interval_seconds: int = Field(default=300)
+	auto_sync_stale_after_minutes: int = Field(default=30)
+	auto_sync_batch_size: int = Field(default=25)
 
 	rag_llm_enabled: bool = Field(default=False)
 	rag_llm_provider: str = Field(default="ollama")

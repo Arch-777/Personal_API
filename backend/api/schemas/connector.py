@@ -32,3 +32,12 @@ class ConnectorDisconnectResponse(BaseModel):
 	items_deleted: int
 	"""Number of synced item rows deleted. 0 when delete_data=false (the default)."""
 
+
+class ConnectorAutoSyncUpdateRequest(BaseModel):
+	enabled: bool
+
+
+class ConnectorAutoSyncResponse(BaseModel):
+	platforms: list[str]
+	auto_sync_enabled: bool
+

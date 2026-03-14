@@ -1,10 +1,10 @@
 import hashlib
 import secrets
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,14 @@ class ApiKeyCreateRequest(BaseModel):
 	name: str | None = Field(default=None, max_length=120)
 	allowed_channels: list[str] = Field(default_factory=list)
 	agent_type: str | None = Field(default=None, max_length=50)
+	expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+	expires_at: datetime | None = Field(default=None)
+
+	@model_validator(mode="after")
+	def validate_expiry_input(self):
+		if self.expires_in_days is not None and self.expires_at is not None:
+			raise ValueError("Provide either expires_in_days or expires_at, not both")
+		return self
 
 
 class ApiKeyCreateResponse(BaseModel):
@@ -31,6 +39,7 @@ class ApiKeyCreateResponse(BaseModel):
 	allowed_channels: list[str]
 	agent_type: str | None
 	created_at: datetime
+	expires_at: datetime | None = None
 
 
 class ApiKeyListItem(BaseModel):
@@ -55,6 +64,20 @@ def create_api_key(
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ) -> ApiKeyCreateResponse:
+	now = datetime.now(UTC)
+	expires_at = payload.expires_at
+	if payload.expires_in_days is not None:
+		expires_at = now + timedelta(days=payload.expires_in_days)
+
+	if expires_at is not None:
+		if expires_at.tzinfo is None:
+			expires_at = expires_at.replace(tzinfo=UTC)
+		if expires_at <= now:
+			raise HTTPException(
+				status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+				detail="expires_at must be in the future",
+			)
+
 	raw_key = f"pk_live_{secrets.token_urlsafe(32)}"
 	key_prefix = raw_key[:14]
 	key_hash = _hash_api_key(raw_key)
@@ -66,6 +89,7 @@ def create_api_key(
 		key_hash=key_hash,
 		allowed_channels=payload.allowed_channels,
 		agent_type=payload.agent_type,
+		expires_at=expires_at,
 	)
 	db.add(api_key)
 	db.commit()
@@ -79,6 +103,7 @@ def create_api_key(
 		allowed_channels=api_key.allowed_channels,
 		agent_type=api_key.agent_type,
 		created_at=api_key.created_at,
+		expires_at=api_key.expires_at,
 	)
 
 

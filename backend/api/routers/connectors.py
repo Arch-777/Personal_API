@@ -18,11 +18,18 @@ from sqlalchemy.orm import Session
 from api.core.auth import get_current_user
 from api.core.config import get_settings
 from api.core.db import SessionLocal, get_db
+from api.core.http_client import get_http_client
 from api.core.security import create_access_token, decode_access_token
 from api.models.connector import Connector
 from api.models.item import Item
 from api.models.user import User
-from api.schemas.connector import ConnectorDisconnectResponse, ConnectorResponse, ConnectorSyncResponse
+from api.schemas.connector import (
+    ConnectorAutoSyncResponse,
+    ConnectorAutoSyncUpdateRequest,
+    ConnectorDisconnectResponse,
+    ConnectorResponse,
+    ConnectorSyncResponse,
+)
 from workers.celery_app import celery_app
 from workers.connector_sync import run_connector_sync
 
@@ -337,21 +344,25 @@ def github_callback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired state parameter") from exc
 
     try:
-        with httpx.Client(timeout=15.0) as client:
-            token_resp = client.post(
-                "https://github.com/login/oauth/access_token",
-                data={
-                    "client_id": settings.github_client_id,
-                    "client_secret": settings.github_client_secret,
-                    "code": code,
-                },
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
-            token_resp.raise_for_status()
-            token_data = _parse_github_token_response(token_resp)
+        token_request_payload = {
+            "client_id": settings.github_client_id,
+            "client_secret": settings.github_client_secret,
+            "code": code,
+        }
+        if settings.github_redirect_uri:
+            token_request_payload["redirect_uri"] = settings.github_redirect_uri
+
+        client = get_http_client(15.0)
+        token_resp = client.post(
+            "https://github.com/login/oauth/access_token",
+            data=token_request_payload,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        token_resp.raise_for_status()
+        token_data = _parse_github_token_response(token_resp)
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange GitHub auth code for tokens") from exc
 
@@ -395,67 +406,67 @@ def github_callback(
     github_org_logins: list[str] = []
 
     try:
-        with httpx.Client(timeout=15.0) as client:
-            profile_resp = client.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-            )
-            profile_resp.raise_for_status()
-            profile_data = profile_resp.json()
+        client = get_http_client(15.0)
+        profile_resp = client.get(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        profile_resp.raise_for_status()
+        profile_data = profile_resp.json()
 
-            github_login = profile_data.get("login") if isinstance(profile_data.get("login"), str) else None
-            github_name = profile_data.get("name") if isinstance(profile_data.get("name"), str) else None
-            profile_email = profile_data.get("email") if isinstance(profile_data.get("email"), str) else None
-            if profile_email:
-                platform_email = profile_email
+        github_login = profile_data.get("login") if isinstance(profile_data.get("login"), str) else None
+        github_name = profile_data.get("name") if isinstance(profile_data.get("name"), str) else None
+        profile_email = profile_data.get("email") if isinstance(profile_data.get("email"), str) else None
+        if profile_email:
+            platform_email = profile_email
 
-            emails_resp = client.get(
-                "https://api.github.com/user/emails",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-            )
-            if emails_resp.status_code == 200:
-                emails_data = emails_resp.json()
-                if isinstance(emails_data, list):
-                    primary_verified = next(
-                        (
-                            item.get("email")
-                            for item in emails_data
-                            if isinstance(item, dict)
-                            and item.get("primary") is True
-                            and item.get("verified") is True
-                            and isinstance(item.get("email"), str)
-                        ),
-                        None,
-                    )
-                    if isinstance(primary_verified, str) and primary_verified.strip():
-                        platform_email = primary_verified
+        emails_resp = client.get(
+            "https://api.github.com/user/emails",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        if emails_resp.status_code == 200:
+            emails_data = emails_resp.json()
+            if isinstance(emails_data, list):
+                primary_verified = next(
+                    (
+                        item.get("email")
+                        for item in emails_data
+                        if isinstance(item, dict)
+                        and item.get("primary") is True
+                        and item.get("verified") is True
+                        and isinstance(item.get("email"), str)
+                    ),
+                    None,
+                )
+                if isinstance(primary_verified, str) and primary_verified.strip():
+                    platform_email = primary_verified
 
-            orgs_resp = client.get(
-                "https://api.github.com/user/orgs",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Accept": "application/vnd.github+json",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-            )
-            if orgs_resp.status_code == 200:
-                orgs_data = orgs_resp.json()
-                if isinstance(orgs_data, list):
-                    github_org_logins = [
-                        org["login"].strip()
-                        for org in orgs_data
-                        if isinstance(org, dict)
-                        and isinstance(org.get("login"), str)
-                        and org["login"].strip()
-                    ]
+        orgs_resp = client.get(
+            "https://api.github.com/user/orgs",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
+        if orgs_resp.status_code == 200:
+            orgs_data = orgs_resp.json()
+            if isinstance(orgs_data, list):
+                github_org_logins = [
+                    org["login"].strip()
+                    for org in orgs_data
+                    if isinstance(org, dict)
+                    and isinstance(org.get("login"), str)
+                    and org["login"].strip()
+                ]
     except Exception:  # noqa: BLE001
         # Profile enrichment is best-effort; connection still succeeds with access token.
         pass
@@ -644,20 +655,20 @@ def google_callback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported Google connector platform")
 
     try:
-        with httpx.Client(timeout=15.0) as client:
-            token_resp = client.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": settings.google_client_id,
-                    "client_secret": settings.google_client_secret,
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": settings.google_redirect_uri,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            token_resp.raise_for_status()
-            token_data = token_resp.json()
+        client = get_http_client(15.0)
+        token_resp = client.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": settings.google_redirect_uri,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        token_resp.raise_for_status()
+        token_data = token_resp.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Google auth code for tokens") from exc
 
@@ -671,30 +682,19 @@ def google_callback(
 
     platform_email: str | None = None
     try:
-        with httpx.Client(timeout=10.0) as client:
-            profile_resp = client.get(
-                "https://openidconnect.googleapis.com/v1/userinfo",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if profile_resp.status_code == 200:
-                platform_email = profile_resp.json().get("email")
+        client = get_http_client(10.0)
+        profile_resp = client.get(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if profile_resp.status_code == 200:
+            platform_email = profile_resp.json().get("email")
     except Exception:  # noqa: BLE001
         pass
 
-    # Ensure the requested Google connector exists and proactively create sibling
-    # Google connector rows to avoid "Connector not found" for drive/gcal/gmail.
+    # Upsert each Google platform once to avoid duplicate pending inserts in the
+    # same transaction and to keep sibling connector rows in sync.
     token_scope = token_data.get("scope") if isinstance(token_data.get("scope"), str) else None
-    _ensure_google_connector_row(
-        db=db,
-        user_id=user_id,
-        platform=normalized_platform,
-        access_token=access_token,
-        refresh_token=refresh_token,
-        token_expires_at=token_expires_at,
-        platform_email=platform_email,
-        google_scope=token_scope,
-    )
-
     for platform_name in GOOGLE_CONNECTOR_PLATFORMS:
         _ensure_google_connector_row(
             db=db,
@@ -762,22 +762,22 @@ def notion_callback(
     ).decode()
 
     try:
-        with httpx.Client(timeout=15.0) as client:
-            token_resp = client.post(
-                "https://api.notion.com/v1/oauth/token",
-                json={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": settings.notion_redirect_uri,
-                },
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Content-Type": "application/json",
-                    "Notion-Version": "2022-06-28",
-                },
-            )
-            token_resp.raise_for_status()
-            token_data = token_resp.json()
+        client = get_http_client(15.0)
+        token_resp = client.post(
+            "https://api.notion.com/v1/oauth/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.notion_redirect_uri,
+            },
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/json",
+                "Notion-Version": "2022-06-28",
+            },
+        )
+        token_resp.raise_for_status()
+        token_data = token_resp.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Notion auth code for tokens") from exc
 
@@ -837,13 +837,13 @@ def notion_quick_token(
 
     # Verify the token against Notion by fetching /v1/users/me
     try:
-        with httpx.Client(timeout=10.0) as client:
-            me_resp = client.get(
-                "https://api.notion.com/v1/users/me",
-                headers={"Authorization": f"Bearer {access_token}", "Notion-Version": "2022-06-28"},
-            )
-            me_resp.raise_for_status()
-            me_data = me_resp.json()
+        client = get_http_client(10.0)
+        me_resp = client.get(
+            "https://api.notion.com/v1/users/me",
+            headers={"Authorization": f"Bearer {access_token}", "Notion-Version": "2022-06-28"},
+        )
+        me_resp.raise_for_status()
+        me_data = me_resp.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Notion token or Notion API error") from exc
 
@@ -954,21 +954,21 @@ def spotify_callback(
     ).decode()
 
     try:
-        with httpx.Client(timeout=15.0) as client:
-            token_resp = client.post(
-                "https://accounts.spotify.com/api/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": settings.spotify_redirect_uri,
-                },
-                headers={
-                    "Authorization": f"Basic {credentials}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
-            token_resp.raise_for_status()
-            token_data = token_resp.json()
+        client = get_http_client(15.0)
+        token_resp = client.post(
+            "https://accounts.spotify.com/api/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.spotify_redirect_uri,
+            },
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        token_resp.raise_for_status()
+        token_data = token_resp.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Spotify auth code for tokens") from exc
 
@@ -983,13 +983,13 @@ def spotify_callback(
     # Fetch the Spotify user profile to store their email.
     platform_email: str | None = None
     try:
-        with httpx.Client(timeout=10.0) as client:
-            me_resp = client.get(
-                "https://api.spotify.com/v1/me",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if me_resp.status_code == 200:
-                platform_email = me_resp.json().get("email")
+        client = get_http_client(10.0)
+        me_resp = client.get(
+            "https://api.spotify.com/v1/me",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if me_resp.status_code == 200:
+            platform_email = me_resp.json().get("email")
     except Exception:  # noqa: BLE001
         pass
 
@@ -1071,19 +1071,19 @@ def slack_callback(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired state parameter") from exc
 
     try:
-        with httpx.Client(timeout=15.0) as client:
-            token_resp = client.post(
-                "https://slack.com/api/oauth.v2.access",
-                data={
-                    "client_id": settings.slack_client_id,
-                    "client_secret": settings.slack_client_secret,
-                    "code": code,
-                    "redirect_uri": settings.slack_redirect_uri,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            token_resp.raise_for_status()
-            token_data = token_resp.json()
+        client = get_http_client(15.0)
+        token_resp = client.post(
+            "https://slack.com/api/oauth.v2.access",
+            data={
+                "client_id": settings.slack_client_id,
+                "client_secret": settings.slack_client_secret,
+                "code": code,
+                "redirect_uri": settings.slack_redirect_uri,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        token_resp.raise_for_status()
+        token_data = token_resp.json()
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Slack auth code for tokens") from exc
 
@@ -1099,14 +1099,14 @@ def slack_callback(
     slack_user_id = authed_user.get("id") if isinstance(authed_user.get("id"), str) else None
     if slack_user_id:
         try:
-            with httpx.Client(timeout=10.0) as client:
-                me_resp = client.get(
-                    "https://slack.com/api/users.info",
-                    params={"user": slack_user_id},
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
-                me_resp.raise_for_status()
-                me_data = me_resp.json()
+            client = get_http_client(10.0)
+            me_resp = client.get(
+                "https://slack.com/api/users.info",
+                params={"user": slack_user_id},
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+            me_resp.raise_for_status()
+            me_data = me_resp.json()
             if isinstance(me_data, dict) and me_data.get("ok"):
                 user_payload = me_data.get("user") if isinstance(me_data.get("user"), dict) else {}
                 profile_payload = user_payload.get("profile") if isinstance(user_payload.get("profile"), dict) else {}
@@ -1352,6 +1352,56 @@ def disconnect_connector(
     return ConnectorDisconnectResponse(
         disconnected=sorted(actually_removed),
         items_deleted=items_deleted,
+    )
+
+
+@router.patch(
+    "/{platform}/auto-sync",
+    response_model=ConnectorAutoSyncResponse,
+    summary="Enable or disable automatic periodic sync for an integration",
+)
+def set_connector_auto_sync(
+    platform: str,
+    body: ConnectorAutoSyncUpdateRequest,
+    cascade_google: bool = True,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ConnectorAutoSyncResponse:
+    normalized_platform = platform.strip().lower()
+    if normalized_platform not in PLATFORM_TO_TASK:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported connector platform '{normalized_platform}'",
+        )
+
+    if cascade_google and normalized_platform in GOOGLE_CONNECTOR_PLATFORMS:
+        target_platforms = list(GOOGLE_CONNECTOR_PLATFORMS)
+    else:
+        target_platforms = [normalized_platform]
+
+    connectors = db.execute(
+        select(Connector).where(
+            Connector.user_id == current_user.id,
+            Connector.platform.in_(target_platforms),
+        )
+    ).scalars().all()
+
+    if not connectors:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No connected integration found for the requested platform",
+        )
+
+    for connector in connectors:
+        metadata = connector.metadata_json if isinstance(connector.metadata_json, dict) else {}
+        metadata["auto_sync_enabled"] = body.enabled
+        connector.metadata_json = metadata
+
+    db.commit()
+
+    return ConnectorAutoSyncResponse(
+        platforms=sorted([connector.platform for connector in connectors]),
+        auto_sync_enabled=body.enabled,
     )
 
 

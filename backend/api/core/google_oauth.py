@@ -1,4 +1,5 @@
 import httpx
+import time
 
 from api.core.config import get_settings
 
@@ -22,6 +23,33 @@ def _extract_email(payload: dict) -> str:
 	if not email or not email_verified:
 		raise ValueError("Google account email is not verified")
 	return str(email)
+
+
+def _extract_subject(payload: dict) -> str | None:
+	subject = payload.get("sub")
+	if subject is None:
+		return None
+	return str(subject).strip() or None
+
+
+def _validate_not_expired(payload: dict) -> None:
+	now = int(time.time())
+	if payload.get("exp") is not None:
+		try:
+			expires_at = int(str(payload.get("exp")).strip())
+		except (TypeError, ValueError) as exc:
+			raise ValueError("Invalid Google token expiry") from exc
+		if expires_at <= now:
+			raise ValueError("Google token has expired")
+		return
+
+	if payload.get("expires_in") is not None:
+		try:
+			expires_in = int(str(payload.get("expires_in")).strip())
+		except (TypeError, ValueError) as exc:
+			raise ValueError("Invalid Google token expiry") from exc
+		if expires_in <= 0:
+			raise ValueError("Google token has expired")
 
 
 def _validate_audience(payload: dict) -> None:
@@ -48,13 +76,17 @@ def _verify_as_id_token(token: str) -> dict[str, str]:
 	if issuer not in GOOGLE_ISSUERS:
 		raise ValueError("Invalid Google token issuer")
 
+	_validate_not_expired(payload)
 	_validate_audience(payload)
 	email = _extract_email(payload)
+	subject = _extract_subject(payload)
 
 	result: dict[str, str] = {"email": email}
 	name = payload.get("name")
 	if name:
 		result["name"] = str(name)
+	if subject:
+		result["sub"] = subject
 	return result
 
 
@@ -66,6 +98,7 @@ def _verify_as_access_token(token: str) -> dict[str, str]:
 	)
 	token_info_response.raise_for_status()
 	token_info_payload = token_info_response.json()
+	_validate_not_expired(token_info_payload)
 	_validate_audience(token_info_payload)
 
 	userinfo_response = httpx.get(
@@ -76,11 +109,14 @@ def _verify_as_access_token(token: str) -> dict[str, str]:
 	userinfo_response.raise_for_status()
 	userinfo_payload = userinfo_response.json()
 	email = _extract_email(userinfo_payload)
+	subject = _extract_subject(userinfo_payload)
 
 	result: dict[str, str] = {"email": email}
 	name = userinfo_payload.get("name")
 	if name:
 		result["name"] = str(name)
+	if subject:
+		result["sub"] = subject
 	return result
 
 

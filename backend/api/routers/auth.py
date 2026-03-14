@@ -10,6 +10,7 @@ from api.core.auth import get_current_user
 from api.core.config import get_settings
 from api.core.db import get_db
 from api.core.google_oauth import verify_google_id_token
+from api.core.http_client import get_http_client
 from api.core.security import create_access_token, hash_password, verify_password
 from api.models.user import User
 from api.schemas.auth import GoogleLoginRequest, LoginRequest, RegisterRequest, TokenResponse, UserResponse
@@ -78,20 +79,20 @@ def google_auth_callback(code: str, state: str, db: Session = Depends(get_db)) -
 	redirect_uri = str(payload.get("google_redirect_uri") or settings.google_auth_redirect_uri)
 
 	try:
-		with httpx.Client(timeout=15.0) as client:
-			token_resp = client.post(
-				"https://oauth2.googleapis.com/token",
-				data={
-					"client_id": settings.google_client_id,
-					"client_secret": settings.google_client_secret,
-					"code": code,
-					"grant_type": "authorization_code",
-					"redirect_uri": redirect_uri,
-				},
-				headers={"Content-Type": "application/x-www-form-urlencoded"},
-			)
-			token_resp.raise_for_status()
-			token_data = token_resp.json()
+		client = get_http_client(15.0)
+		token_resp = client.post(
+			"https://oauth2.googleapis.com/token",
+			data={
+				"client_id": settings.google_client_id,
+				"client_secret": settings.google_client_secret,
+				"code": code,
+				"grant_type": "authorization_code",
+				"redirect_uri": redirect_uri,
+			},
+			headers={"Content-Type": "application/x-www-form-urlencoded"},
+		)
+		token_resp.raise_for_status()
+		token_data = token_resp.json()
 	except httpx.HTTPError as exc:
 		raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to exchange Google auth code") from exc
 
