@@ -127,7 +127,7 @@ export function HeroSection() {
                 ].map((item) => (
                   <div
                     key={item.source}
-                    className="flex items-center gap-3 rounded-lg bg-white/[0.03] p-3 border-l-2"
+                    className="flex items-center gap-3 rounded-lg bg-white/3 p-3 border-l-2"
                     style={{ borderLeftColor: item.color }}
                   >
                     <div>
