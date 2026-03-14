@@ -115,7 +115,7 @@ export function FeaturesSection() {
             <div
               key={feature.title}
               ref={refs[i]}
-              className="reveal relative overflow-hidden rounded-[20px] transition-all duration-300 hover:scale-[1.01] hover:-translate-y-1 group flex flex-col dark:bg-[#0a0a0a] bg-white border dark:border-[#222] border-gray-200"
+              className="reveal relative overflow-hidden rounded-[20px] transition-all duration-300 hover:scale-[1.01] hover:-translate-y-1 group flex flex-col dark:bg-[#0a0a0a] bg-white border border-black"
               style={{ transitionDelay: `${i * 120}ms` }}
             >
               {/* ── HEADER (like the reference's small uppercase label) ── */}
@@ -221,7 +221,7 @@ export function FeaturesSection() {
               </div>
 
               {/* ── FOOTER STAT ── */}
-              <div className="pb-6 pt-5 mt-auto flex items-baseline justify-between gap-2 border-t dark:border-[#222] border-gray-200 mx-6">
+              <div className="pb-6 pt-5 mt-auto flex items-baseline justify-between gap-2 border-t border-black mx-6">
                 <span className="text-[11px] uppercase tracking-widest dark:text-gray-500 text-gray-400 font-bold whitespace-nowrap">
                   {feature.stat.label}
                 </span>
