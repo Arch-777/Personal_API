@@ -1291,3 +1291,36 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Manual config review confirms removed keys are optional because defaults are defined in `api/core/config.py`.
 - Next:
   - If runtime tuning is needed, set the removed variables explicitly in deployment-specific env files.
+
+## Step 46 - Chat History Query and Recent-First Support
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/routers/chat.py:
+    - Extended `GET /v1/chat/{session_id}/history` with `query` and `order` query params.
+    - Added case-insensitive content filtering for in-session history search.
+    - Added `order=desc` support so `limit` can return the most recent chat messages instead of always returning the oldest rows.
+  - backend/tests/test_api.py:
+    - Added regression coverage for recent-first history retrieval and content-query filtering.
+  - docs/FRONTEND_API_REFERENCE.md:
+    - Documented the new `query` and `order` params for chat history.
+- Verification:
+  - Targeted API regression suite passed locally for chat history changes.
+  - Command (from `backend/`): `py -3 -m pytest tests/test_api.py -q`
+- Next:
+  - Wire the frontend chat UI to call `GET /v1/chat/{session_id}/history?order=desc&limit=<n>` for recent-message views or sidebars.
+
+## Step 47 - Postman Coverage for Recent Chat History Queries
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Updated `Chat -> Get History` description to clarify oldest-to-newest ordering.
+    - Added `Chat -> Get Recent History` request using `limit=20&order=desc`.
+    - Added optional disabled `query=plan` param so Postman users can enable in-session content filtering without sending an empty query value by default.
+    - Added response assertions for recent-history request shape and limit behavior.
+- Verification:
+  - Collection JSON syntax validated.
+  - Command (from workspace root): `python -m json.tool docs/postman/PersonalAPI.postman_collection.json`
+- Next:
+  - Use `Get Recent History` for sidebar/recent-chat manual testing, and enable the `query` param when validating in-session search behavior.

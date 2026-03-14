@@ -917,7 +917,7 @@
                 }
               ]
             },
-            "description": "Returns chronological chat history for a session id."
+            "description": "Returns chronological chat history for a session id in oldest-to-newest order."
           },
           "event": [
             {
@@ -939,6 +939,59 @@
                   "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
                   "var body = pm.response.json();",
                   "pm.test('History response is array', function () { pm.expect(body).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Recent History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/chat/{{chatSessionId}}/history?limit=20&order=desc&query=plan",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "chat", "{{chatSessionId}}", "history"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "order",
+                  "value": "desc"
+                },
+                {
+                  "key": "query",
+                  "value": "plan",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Returns the most recent chat messages first. Enable the optional query param to filter message content within the session."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('chatSessionId')) {",
+                  "  throw new Error('chatSessionId is empty. Run Chat -> Send Message first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Recent history response is array', function () { pm.expect(body).to.be.an('array'); });",
+                  "pm.test('Recent history length respects limit', function () { pm.expect(body.length).to.be.at.most(20); });"
                 ]
               }
             }

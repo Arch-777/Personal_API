@@ -86,6 +86,46 @@ def _build_item(item_type: str, source: str) -> SimpleNamespace:
 	)
 
 
+def _build_chat_message(session_id: uuid.UUID, role: str, content: str, created_at: datetime) -> SimpleNamespace:
+	return SimpleNamespace(
+		id=uuid.uuid4(),
+		session_id=session_id,
+		role=role,
+		content=content,
+		sources=[],
+		created_at=created_at,
+	)
+
+
+class _FakeChatHistoryDb:
+	def __init__(self, session_row, message_rows: list[SimpleNamespace]):
+		self.session_row = session_row
+		self.message_rows = message_rows
+		self.message_stmt = None
+
+	def execute(self, stmt):
+		stmt_str = str(stmt)
+		if "FROM chat_sessions" in stmt_str:
+			return _FakeResult(one=self.session_row)
+
+		if "FROM chat_messages" in stmt_str:
+			self.message_stmt = stmt
+			rows = list(self.message_rows)
+			params = stmt.compile().params
+			search_value = next((value for value in params.values() if isinstance(value, str) and value.startswith("%") and value.endswith("%")), None)
+			if search_value is not None:
+				needle = search_value.strip("%").lower()
+				rows = [row for row in rows if needle in row.content.lower()]
+			reverse = " DESC" in stmt_str.upper()
+			rows.sort(key=lambda row: row.created_at, reverse=reverse)
+			limit_value = getattr(getattr(stmt, "_limit_clause", None), "value", None)
+			if isinstance(limit_value, int):
+				rows = rows[:limit_value]
+			return _FakeResult(rows=rows)
+
+		return _FakeResult()
+
+
 def test_health_endpoint_returns_ok():
 	client = TestClient(app)
 	response = client.get("/health")
@@ -199,6 +239,63 @@ def test_documents_endpoint_returns_paginated_items():
 	body = response.json()
 	assert body["total"] == 1
 	assert body["items"][0]["source"] == "drive"
+
+	app.dependency_overrides.clear()
+
+
+def test_chat_history_supports_recent_first_ordering():
+	user_id = uuid.uuid4()
+	session_id = uuid.uuid4()
+	session = SimpleNamespace(id=session_id, user_id=user_id)
+	now = datetime.now(UTC)
+	fake_db = _FakeChatHistoryDb(
+		session_row=session,
+		message_rows=[
+			_build_chat_message(session_id, "user", "Oldest question", now - timedelta(minutes=3)),
+			_build_chat_message(session_id, "assistant", "Middle answer", now - timedelta(minutes=2)),
+			_build_chat_message(session_id, "user", "Newest follow-up", now - timedelta(minutes=1)),
+		],
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+
+	client = TestClient(app)
+	response = client.get(f"/v1/chat/{session_id}/history?limit=2&order=desc")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert [message["content"] for message in body] == ["Newest follow-up", "Middle answer"]
+	assert " DESC" in str(fake_db.message_stmt).upper()
+
+	app.dependency_overrides.clear()
+
+
+def test_chat_history_supports_content_query_filter():
+	user_id = uuid.uuid4()
+	session_id = uuid.uuid4()
+	session = SimpleNamespace(id=session_id, user_id=user_id)
+	now = datetime.now(UTC)
+	fake_db = _FakeChatHistoryDb(
+		session_row=session,
+		message_rows=[
+			_build_chat_message(session_id, "user", "Show me the project plan", now - timedelta(minutes=3)),
+			_build_chat_message(session_id, "assistant", "Here is the roadmap summary", now - timedelta(minutes=2)),
+			_build_chat_message(session_id, "user", "Find the latest plan notes", now - timedelta(minutes=1)),
+		],
+	)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+
+	client = TestClient(app)
+	response = client.get(f"/v1/chat/{session_id}/history?query=plan")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert [message["content"] for message in body] == ["Show me the project plan", "Find the latest plan notes"]
+	assert "LIKE" in str(fake_db.message_stmt).upper()
+	assert "%plan%" in fake_db.message_stmt.compile().params.values()
 
 	app.dependency_overrides.clear()
 

@@ -360,6 +360,8 @@ Authorization: Bearer <access_token>
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `limit` | int | `50` | Max messages to return (1–200) |
+| `query` | string | `null` | Optional case-insensitive content filter |
+| `order` | string | `asc` | `asc` for oldest → newest, `desc` for recent-first |
 
 **Response `200`**
 ```json
@@ -381,7 +383,7 @@ Authorization: Bearer <access_token>
 ]
 ```
 
-**Use case:** Restore chat history when the user reopens a session. Messages are ordered oldest → newest.
+**Use case:** Restore chat history when the user reopens a session, or fetch recent messages with `?order=desc&limit=20`. Add `?query=plan` to filter within a session.
 
 ---
 

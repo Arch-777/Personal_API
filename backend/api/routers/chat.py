@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -71,6 +72,8 @@ def send_chat_message(
 def get_chat_history(
 	session_id: uuid.UUID,
 	limit: int = Query(default=50, ge=1, le=200),
+	query: str | None = Query(default=None, min_length=1, max_length=200, description="Filter messages by content text."),
+	order: Literal["asc", "desc"] = Query(default="asc", description="Sort by created_at. Use desc for recent-first results."),
 	db: Session = Depends(get_db),
 	current_user: User = Depends(get_current_user),
 ) -> list[ChatHistoryMessage]:
@@ -80,11 +83,13 @@ def get_chat_history(
 	if session is None:
 		raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat session not found")
 
+	search_term = query.strip() if query else None
+	stmt = select(ChatMessage).where(ChatMessage.session_id == session.id)
+	if search_term:
+		stmt = stmt.where(ChatMessage.content.ilike(f"%{search_term}%"))
+
 	rows = db.execute(
-		select(ChatMessage)
-		.where(ChatMessage.session_id == session.id)
-		.order_by(ChatMessage.created_at.asc())
-		.limit(limit)
+		stmt.order_by(ChatMessage.created_at.desc() if order == "desc" else ChatMessage.created_at.asc()).limit(limit)
 	).scalars().all()
 
 	return [
