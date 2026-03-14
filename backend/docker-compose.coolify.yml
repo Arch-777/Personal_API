@@ -56,6 +56,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  worker-github:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.github",
+        "--hostname=worker-github@%h",
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   worker-notion:
     build:
       context: ./backend

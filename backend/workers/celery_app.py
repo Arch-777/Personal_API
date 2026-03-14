@@ -45,7 +45,7 @@ ALL_QUEUES = (
 
 TASK_ROUTES = {
     "workers.google_worker.*": {"queue": QUEUE_GOOGLE},
-    "workers.github_worker.*": {"queue": QUEUE_GOOGLE},
+    "workers.github_worker.*": {"queue": QUEUE_GITHUB},
     "workers.notion_worker.*": {"queue": QUEUE_NOTION},
     "workers.spotify_worker.*": {"queue": QUEUE_SPOTIFY},
     "workers.slack_worker.*": {"queue": QUEUE_SLACK},

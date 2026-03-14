@@ -80,6 +80,34 @@ services:
       - ./:/app
     restart: unless-stopped
 
+  worker-github:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:localpass@db:5432/personalapi
+      REDIS_URL: redis://redis:6379/0
+    command:
+      [
+        "celery",
+        "-A",
+        "workers.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--queues=connector.github",
+        "--hostname=worker-github@%h",
+      ]
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
   worker-notion:
     build:
       context: .
