@@ -519,6 +519,26 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Redeploy workers and API so new exception flow is active.
   - Reconnect Google Drive/GCal with the matching platform OAuth flow and retry sync.
 
+## Step 47 - API Worker Hotfix: Mixed Datetime Sort Crash
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/retriever.py:
+    - Fixed mixed offset-naive and offset-aware datetime sorting in retrieval ranking paths.
+    - Added `_coerce_sort_datetime` helper to normalize all sort keys to UTC-aware datetimes.
+    - Updated all relevant sorts to use normalized datetime keys:
+      - chunk-first rerank sort
+      - combined rerank sort
+      - recent-items deduped sort
+  - backend/tests/test_rag.py:
+    - Added regression test `test_hybrid_retriever_handles_mixed_naive_and_aware_item_dates_in_sorting`.
+- Verification:
+  - Focused tests passed: `tests/test_rag.py` -> 20 passed in 2.42s.
+  - Command used: `Set-Location backend; py -3 -m pytest tests/test_rag.py -q`
+- Next:
+  - Redeploy/restart API worker service to load the patched retriever.
+  - Run one live chat query that previously failed to confirm no ASGI exception on mixed datetime data.
+
 ## Step 29 - OAuth Callback UX Redirect to Frontend + Toast Feedback
 - Status: Completed
 - Date: 2026-03-14
