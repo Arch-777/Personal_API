@@ -4,6 +4,7 @@ import logging
 import uuid
 from typing import Any
 
+import httpx
 from sqlalchemy.orm import Session
 
 from api.core.config import get_settings
@@ -75,6 +76,13 @@ class RAGEngine:
 			try:
 				answer = self.generator.generate(query=normalized_query, context_text=built.context_text)
 				answer_mode = "llm"
+			except httpx.TimeoutException as exc:
+				logger.warning(
+					"LLM generation timed out; falling back to deterministic RAG answer: %s",
+					exc,
+				)
+				answer = self.context_builder.compose_answer(normalized_query, retrieved)
+				answer_mode = "fallback"
 			except Exception:
 				logger.exception("LLM generation failed; falling back to deterministic RAG answer")
 				# Fall back to deterministic answer path when local LLM is unavailable.

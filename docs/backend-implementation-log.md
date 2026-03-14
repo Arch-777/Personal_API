@@ -801,6 +801,19 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - For production, keep strict startup gate:
     - `DATABASE_STARTUP_CHECK_REQUIRED=true`
 
+## Step 51 - Chat Timeout Log Noise Reduction (Ollama Fallback)
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/engine.py:
+    - Added explicit `httpx.TimeoutException` handling in the LLM answer path.
+    - Timeout failures now log as warning-level fallback messages instead of full stack traces.
+    - Deterministic RAG fallback behavior remains unchanged.
+- Verification:
+  - Targeted tests passed: `py -3 -m pytest tests/test_rag.py -q` -> 25 passed.
+- Next:
+  - If timeouts continue frequently, increase `RAG_LLM_TIMEOUT_SECONDS` or check Ollama CPU/RAM saturation.
+
 ## Step 49 - RAG Smart Message Replies + Slack Intent Routing Fix
 - Status: Completed
 - Date: 2026-03-14
