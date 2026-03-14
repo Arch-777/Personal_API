@@ -129,7 +129,7 @@ class HybridRetriever:
 		if chunk_candidates:
 			deduped = _dedupe_and_group(chunk_candidates)
 			reranked = _rerank_grouped_results(deduped, intent=intent)
-			reranked.sort(key=lambda item: (item.score, item.item_date or datetime.min), reverse=True)
+			reranked.sort(key=lambda item: (item.score, _coerce_sort_datetime(item.item_date)), reverse=True)
 			return reranked[:top_k]
 
 		stmt = select(Item).where(Item.user_id == user_id)
@@ -202,7 +202,7 @@ class HybridRetriever:
 		combined = chunk_candidates + scored
 		deduped = _dedupe_and_group(combined)
 		reranked = _rerank_grouped_results(deduped, intent=intent, include_debug=include_debug)
-		reranked.sort(key=lambda item: (item.score, item.item_date or datetime.min), reverse=True)
+		reranked.sort(key=lambda item: (item.score, _coerce_sort_datetime(item.item_date)), reverse=True)
 		return reranked[:top_k]
 
 	def _retrieve_chunk_candidates(
@@ -321,7 +321,7 @@ class HybridRetriever:
 			)
 
 		deduped = _dedupe_and_group(results)
-		deduped.sort(key=lambda item: (item.item_date or datetime.min, item.score), reverse=True)
+		deduped.sort(key=lambda item: (_coerce_sort_datetime(item.item_date), item.score), reverse=True)
 		return deduped[:top_k]
 
 
@@ -648,4 +648,12 @@ def _recency_bonus(item_date: datetime | None) -> float:
 	if age_days <= 90:
 		return 0.02
 	return 0.0
+
+
+def _coerce_sort_datetime(value: datetime | None) -> datetime:
+	if value is None:
+		return datetime.min.replace(tzinfo=UTC)
+	if value.tzinfo is None:
+		return value.replace(tzinfo=UTC)
+	return value.astimezone(UTC)
 

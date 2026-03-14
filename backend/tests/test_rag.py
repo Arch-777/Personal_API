@@ -207,6 +207,45 @@ def test_hybrid_retriever_prefers_more_recent_item_when_relevance_is_equal():
 	assert results[0].item_date > results[1].item_date
 
 
+def test_hybrid_retriever_handles_mixed_naive_and_aware_item_dates_in_sorting():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="drive",
+			title="Team retrospective",
+			summary="Sprint notes",
+			content="Retrospective outcomes",
+			metadata_json={},
+			item_date=now,
+			file_path="/users/u/data/drive/retro.json",
+			embedding=None,
+			created_at=now,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Team retrospective",
+			summary="Sprint notes",
+			content="Retrospective outcomes",
+			metadata_json={},
+			item_date=(now - timedelta(days=1)).replace(tzinfo=None),
+			file_path="/users/u/data/notion/retro.json",
+			embedding=None,
+			created_at=now,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="team retrospective", top_k=5)
+
+	assert len(results) == 2
+	assert results[0].source == "drive"
+
+
 def test_hybrid_retriever_ignores_stopword_noise_for_mail_queries():
 	now = datetime.now(UTC)
 	rows = [
