@@ -1831,6 +1831,126 @@
           ]
         },
         {
+          "name": "MCP Unified Endpoint - List Tools",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"list_tools\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp/endpoint",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "endpoint"]
+            },
+            "description": "Single MCP endpoint for clients like OpenClaw. Use action=list_tools to discover available tools."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Unified list_tools response is valid', function () {",
+                  "  pm.expect(body.action).to.eql('list_tools');",
+                  "  pm.expect(body).to.have.property('data');",
+                  "  pm.expect(body.data).to.have.property('tools');",
+                  "  pm.expect(body.data.tools).to.be.an('array').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "MCP Unified Endpoint - Call Tool (Search)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-API-Key",
+                "value": "{{developerApiKey}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"call_tool\",\n  \"tool\": \"search\",\n  \"arguments\": {\n    \"query\": \"{{searchQuery}}\",\n    \"top_k\": 10,\n    \"type_filter\": null,\n    \"source_filter\": null\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp/endpoint",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp", "endpoint"]
+            },
+            "description": "Execute any MCP tool through the single endpoint. This example calls tool=search and stores the first result id for follow-up item fetches."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('developerApiKey')) {",
+                  "  throw new Error('developerApiKey is empty. Run Developer -> Create API Key first.');",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Unified call_tool response is valid', function () {",
+                  "  pm.expect(body.action).to.eql('call_tool');",
+                  "  pm.expect(body.tool).to.eql('search');",
+                  "  pm.expect(body).to.have.property('data');",
+                  "  pm.expect(body.data).to.have.property('results');",
+                  "  pm.expect(body.data).to.have.property('count');",
+                  "});",
+                  "if (body.data && body.data.results && body.data.results.length > 0) {",
+                  "  pm.collectionVariables.set('mcpItemId', body.data.results[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "MCP Search",
           "request": {
             "auth": {

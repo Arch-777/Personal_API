@@ -1114,3 +1114,25 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Ensure the exact callback URI used in `.env` is present in Google Cloud OAuth Authorized redirect URIs.
   - Retry login flow from frontend and confirm callback completes without `redirect_uri_mismatch`.
+
+## Step 44 - Postman Coverage for Unified MCP Endpoint
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added `MCP Unified Endpoint - List Tools`
+      - `POST /mcp/endpoint` with body `{ "action": "list_tools" }`.
+      - Includes test assertions for unified response envelope (`action`, `data.tools`).
+    - Added `MCP Unified Endpoint - Call Tool (Search)`
+      - `POST /mcp/endpoint` with body:
+        - `action: "call_tool"`
+        - `tool: "search"`
+        - `arguments` payload mapped to existing search inputs.
+      - Includes response assertions for `call_tool` envelope and nested search result contract.
+      - Captures first result id into `mcpItemId` for reuse with `MCP Get Item`.
+- Verification:
+  - Collection JSON syntax validated.
+  - Command (from `backend/`): `python -m json.tool ..\\docs\\postman\\PersonalAPI.postman_collection.json`
+- Next:
+  - Use the two new MCP Unified requests as the preferred OpenClaw/client integration path.
+  - Keep legacy `/mcp/tools/*` requests for backward compatibility during transition.

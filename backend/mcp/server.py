@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
@@ -160,6 +160,70 @@ class UserProfileResponse(BaseModel):
     item_count: int
 
 
+class UnifiedMCPRequest(BaseModel):
+    action: Literal["list_tools", "call_tool"] = Field(
+        description="Use 'list_tools' for discovery or 'call_tool' to execute a tool"
+    )
+    tool: str | None = Field(default=None, description="Tool name when action='call_tool'")
+    arguments: dict[str, Any] = Field(default_factory=dict, description="Tool input payload")
+
+
+class UnifiedMCPResponse(BaseModel):
+    action: str
+    tool: str | None = None
+    data: Any
+
+
+_TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    {
+        "name": "search",
+        "method": "POST",
+        "path": "/tools/search",
+        "description": "Full-text search across all synced personal data (emails, documents, messages, tracks, events).",
+        "input_schema": {
+            "query": "string (required) — natural language search term",
+            "top_k": "integer (default 10, max 50)",
+            "type_filter": "string|null — email|document|track|message|event",
+            "source_filter": "string|null — gmail|drive|notion|slack|spotify|gcal",
+        },
+    },
+    {
+        "name": "ask",
+        "method": "POST",
+        "path": "/tools/ask",
+        "description": "Ask a natural language question; returns a grounded answer with source citations.",
+        "input_schema": {
+            "question": "string (required)",
+            "top_k": "integer (default 8)",
+            "session_id": "string|null",
+        },
+    },
+    {
+        "name": "get_item",
+        "method": "GET",
+        "path": "/tools/item/{item_id}",
+        "description": "Retrieve full content and metadata for a single item by UUID.",
+        "input_schema": {
+            "item_id": "UUID string (path parameter)",
+        },
+    },
+    {
+        "name": "list_connectors",
+        "method": "GET",
+        "path": "/tools/connectors",
+        "description": "List all connected platforms and their current sync status.",
+        "input_schema": {},
+    },
+    {
+        "name": "get_profile",
+        "method": "GET",
+        "path": "/tools/profile",
+        "description": "Return user profile and a summary of synced data counts.",
+        "input_schema": {},
+    },
+]
+
+
 # ---------------------------------------------------------------------------
 # Tools / endpoints
 # ---------------------------------------------------------------------------
@@ -167,6 +231,61 @@ class UserProfileResponse(BaseModel):
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "mcp"}
+
+
+def _coerce_args(model_cls: type[BaseModel], payload: dict[str, Any]) -> BaseModel:
+    """Validate a dynamic payload against a tool request model."""
+    return model_cls.model_validate(payload)
+
+
+def _dispatch_tool(tool_name: str, tool_args: dict[str, Any], x_api_key: str) -> Any:
+    """Execute a tool by name for unified MCP clients."""
+    if tool_name == "search":
+        body = _coerce_args(SearchRequest, tool_args)
+        return tool_search(body=body, x_api_key=x_api_key)
+
+    if tool_name == "ask":
+        body = _coerce_args(AskRequest, tool_args)
+        return tool_ask(body=body, x_api_key=x_api_key)
+
+    if tool_name == "get_item":
+        item_id = str(tool_args.get("item_id", "")).strip()
+        if not item_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required argument: item_id")
+        return tool_get_item(item_id=item_id, x_api_key=x_api_key)
+
+    if tool_name == "list_connectors":
+        return tool_list_connectors(x_api_key=x_api_key)
+
+    if tool_name == "get_profile":
+        return tool_get_profile(x_api_key=x_api_key)
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Unknown tool '{tool_name}'. Use action='list_tools' to discover supported tools.",
+    )
+
+
+@app.post("/endpoint", response_model=UnifiedMCPResponse, summary="Unified MCP endpoint for discovery and invocation")
+def unified_mcp_endpoint(
+    body: UnifiedMCPRequest,
+    x_api_key: str = Header(..., description="Developer API key (pk_live_...)"),
+) -> UnifiedMCPResponse:
+    """Single endpoint for MCP-style clients (OpenClaw and others).
+
+    Request examples:
+    - {"action": "list_tools"}
+    - {"action": "call_tool", "tool": "search", "arguments": {"query": "budget", "top_k": 5}}
+    """
+    if body.action == "list_tools":
+        return UnifiedMCPResponse(action="list_tools", data={"tools": _TOOL_DEFINITIONS})
+
+    tool_name = (body.tool or "").strip()
+    if not tool_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing required field: tool")
+
+    result = _dispatch_tool(tool_name=tool_name, tool_args=body.arguments, x_api_key=x_api_key)
+    return UnifiedMCPResponse(action="call_tool", tool=tool_name, data=result)
 
 
 @app.post("/tools/search", response_model=SearchResponse, summary="Search personal data")
@@ -344,53 +463,4 @@ def tool_get_profile(
 @app.get("/tools/list", summary="List available MCP tools")
 def tool_list() -> dict[str, Any]:
     """Return metadata for all available tools — useful for MCP client discovery."""
-    return {
-        "tools": [
-            {
-                "name": "search",
-                "method": "POST",
-                "path": "/tools/search",
-                "description": "Full-text search across all synced personal data (emails, documents, messages, tracks, events).",
-                "input_schema": {
-                    "query": "string (required) — natural language search term",
-                    "top_k": "integer (default 10, max 50)",
-                    "type_filter": "string|null — email|document|track|message|event",
-                    "source_filter": "string|null — gmail|drive|notion|slack|spotify|gcal",
-                },
-            },
-            {
-                "name": "ask",
-                "method": "POST",
-                "path": "/tools/ask",
-                "description": "Ask a natural language question; returns a grounded answer with source citations.",
-                "input_schema": {
-                    "question": "string (required)",
-                    "top_k": "integer (default 8)",
-                    "session_id": "string|null",
-                },
-            },
-            {
-                "name": "get_item",
-                "method": "GET",
-                "path": "/tools/item/{item_id}",
-                "description": "Retrieve full content and metadata for a single item by UUID.",
-                "input_schema": {
-                    "item_id": "UUID string (path parameter)",
-                },
-            },
-            {
-                "name": "list_connectors",
-                "method": "GET",
-                "path": "/tools/connectors",
-                "description": "List all connected platforms and their current sync status.",
-                "input_schema": {},
-            },
-            {
-                "name": "get_profile",
-                "method": "GET",
-                "path": "/tools/profile",
-                "description": "Return user profile and a summary of synced data counts.",
-                "input_schema": {},
-            },
-        ]
-    }
+    return {"tools": _TOOL_DEFINITIONS}

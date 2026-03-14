@@ -258,6 +258,35 @@ def test_developer_revoke_api_key_success():
 	assert resp.status_code == 200
 	assert resp.json()["revoked_at"] is not None
 
+
+def test_mcp_unified_endpoint_lists_tools():
+	client = TestClient(app)
+	response = client.post(
+		"/mcp/endpoint",
+		headers={"X-API-Key": "pk_live_dummy"},
+		json={"action": "list_tools"},
+	)
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["action"] == "list_tools"
+	assert "data" in body and "tools" in body["data"]
+	tool_names = [t["name"] for t in body["data"]["tools"]]
+	assert "search" in tool_names
+	assert "ask" in tool_names
+
+
+def test_mcp_unified_endpoint_requires_tool_for_call_action():
+	client = TestClient(app)
+	response = client.post(
+		"/mcp/endpoint",
+		headers={"X-API-Key": "pk_live_dummy"},
+		json={"action": "call_tool", "arguments": {}},
+	)
+
+	assert response.status_code == 400
+	assert response.json()["detail"] == "Missing required field: tool"
+
 	app.dependency_overrides.clear()
 
 
