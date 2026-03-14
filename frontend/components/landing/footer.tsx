@@ -4,6 +4,8 @@ import Link from "next/link";
 import { Github, Twitter, Linkedin, Mail } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useState, useEffect } from "react";
+import Image from 'next/image'
+
 
 const footerLinks = {
   PRODUCT: [

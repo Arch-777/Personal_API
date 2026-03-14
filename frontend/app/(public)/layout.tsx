@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Footer } from "@/components/landing/footer";
@@ -91,17 +92,14 @@ export default function PublicLayout({
             href="/"
             className="flex items-center gap-2 font-bold text-base text-gray-900 dark:text-white"
           >
-            <svg
-              className="h-7 w-7"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.5}
-              style={{ color: "oklch(0.62 0.22 275)" }}
-            >
-              <path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4 7l3 3 3-3c2-1.5 4-4 4-7a7 7 0 0 0-7-7z" />
-              <circle cx="12" cy="9" r="2" />
-            </svg>
+            <Image
+              src="/PersonalApi.png"
+              alt="PersonalAPI logo"
+              width={28}
+              height={28}
+              className="h-7 w-7 object-contain"
+              priority
+            />
             <span>PersonalAPI</span>
           </Link>
 

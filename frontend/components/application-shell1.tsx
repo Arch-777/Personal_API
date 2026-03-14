@@ -15,6 +15,7 @@ import {
     Settings,
     User,
 } from "lucide-react";
+  import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
@@ -164,9 +165,14 @@ const SidebarLogo = ({ logo }: { logo: SidebarData["logo"] }) => {
       <SidebarMenuItem>
         <SidebarMenuButton size="lg" render={<Link href="/" />} className="hover:bg-transparent hover:text-sidebar-foreground">
           <React.Fragment>
-            <div className="flex aspect-square size-8 items-center justify-center rounded-sm bg-primary text-primary-foreground font-bold text-sm">
-              PA
-            </div>
+            <Image
+              src="/PersonalApi.png"
+              alt="PersonalAPI logo"
+              width={32}
+              height={32}
+              className="size-8 rounded-sm object-contain"
+              priority
+            />
             <div className="flex flex-col gap-0.5 leading-none">
               <span className="font-medium">{logo.title}</span>
               <span className="text-xs text-muted-foreground">
@@ -387,9 +393,14 @@ export function ApplicationShell1({
             className="mr-2 hidden data-[orientation=vertical]:h-4 md:block"
           />
           <a href="/dashboard" className="flex items-center gap-2 md:hidden">
-            <div className="flex aspect-square size-8 items-center justify-center rounded-sm bg-primary text-primary-foreground font-bold text-sm">
-              PA
-            </div>
+            <Image
+              src="/PersonalApi.png"
+              alt="PersonalAPI logo"
+              width={32}
+              height={32}
+              className="size-8 rounded-sm object-contain"
+              priority
+            />
             <span className="font-semibold">{sidebarData.logo.title}</span>
           </a>
           <Breadcrumb className="hidden md:block">
