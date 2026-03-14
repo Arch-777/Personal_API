@@ -1636,6 +1636,114 @@
               }
             }
           ]
+        },
+        {
+          "name": "Disconnect Integration",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/{{connectorPlatform}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "{{connectorPlatform}}"],
+              "query": []
+            },
+            "description": "Removes the connector row for the selected platform. For Google platforms (gmail/drive/gcal) all three sibling connectors are removed together by default (cascade_google=true). Synced items are NOT deleted unless delete_data=true is appended."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Disconnect response is valid', function () {",
+                  "  pm.expect(body).to.have.property('disconnected');",
+                  "  pm.expect(body.disconnected).to.be.an('array').and.not.empty;",
+                  "  pm.expect(body).to.have.property('items_deleted');",
+                  "});",
+                  "console.log('Disconnected: ' + body.disconnected.join(', ') + ' | items_deleted: ' + body.items_deleted);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disconnect Integration + Delete Synced Data",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/{{connectorPlatform}}?delete_data=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "{{connectorPlatform}}"],
+              "query": [
+                {
+                  "key": "delete_data",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Removes the connector AND permanently deletes all synced items (and item_chunks via cascade) for the platform. Use with caution — this is irreversible."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('Disconnect + delete response is valid', function () {",
+                  "  pm.expect(body).to.have.property('disconnected');",
+                  "  pm.expect(body.disconnected).to.be.an('array').and.not.empty;",
+                  "  pm.expect(body).to.have.property('items_deleted');",
+                  "  pm.expect(body.items_deleted).to.be.a('number');",
+                  "});",
+                  "console.log('Disconnected: ' + body.disconnected.join(', ') + ' | items_deleted: ' + body.items_deleted);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Disconnect Google (All 3 Platforms)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/{{apiPrefix}}/connectors/gmail?cascade_google=true",
+              "host": ["{{baseUrl}}"],
+              "path": ["{{apiPrefix}}", "connectors", "gmail"],
+              "query": [
+                {
+                  "key": "cascade_google",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Shortcut: removes Gmail, Drive, and Google Calendar connectors in a single call (cascade_google=true). All three share one OAuth token so disconnecting one without cascading leaves orphaned connectors."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () { pm.response.to.have.status(200); });",
+                  "var body = pm.response.json();",
+                  "pm.test('All three Google connectors removed', function () {",
+                  "  pm.expect(body.disconnected).to.be.an('array');",
+                  "  ['drive', 'gcal', 'gmail'].forEach(function(p) {",
+                  "    pm.expect(body.disconnected).to.include(p);",
+                  "  });",
+                  "});",
+                  "console.log('Disconnected: ' + body.disconnected.join(', '));"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

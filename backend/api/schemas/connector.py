@@ -23,3 +23,12 @@ class ConnectorSyncResponse(BaseModel):
 	status: str
 	platform: str
 
+
+class ConnectorDisconnectResponse(BaseModel):
+	"""Returned after a successful DELETE /connectors/{platform} call."""
+
+	disconnected: list[str]
+	"""All platform connector rows that were removed (may include Google siblings)."""
+	items_deleted: int
+	"""Number of synced item rows deleted. 0 when delete_data=false (the default)."""
+

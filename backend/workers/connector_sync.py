@@ -607,31 +607,44 @@ def _extract_notion_plain_text(blocks: list[dict[str, Any]]) -> str:
 
 def _fetch_spotify_records(access_token: str, source_cursor: str | None) -> tuple[list[dict[str, Any]], str]:
     # Fetch recently-played (cursor-based, incremental).
+    # Requires Spotify Premium — free accounts receive 403. When that happens we
+    # gracefully skip this section and fall back to liked/saved tracks only.
+    rp_rows: list[dict[str, Any]] = []
+    next_cursor: str = str(source_cursor or "0")
+    recently_played_forbidden = False
+
     params: dict[str, Any] = {"limit": 50}
     if source_cursor:
         params["after"] = source_cursor
 
-    payload = _http_get_json(
-        url="https://api.spotify.com/v1/me/player/recently-played",
-        access_token=access_token,
-        params=params,
-    )
-    rp_items = payload.get("items") if isinstance(payload.get("items"), list) else []
-    rp_rows = [
-        dict(row, _record_type="recently_played")
-        for row in rp_items
-        if isinstance(row, dict)
-    ]
+    try:
+        payload = _http_get_json(
+            url="https://api.spotify.com/v1/me/player/recently-played",
+            access_token=access_token,
+            params=params,
+        )
+        rp_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        rp_rows = [
+            dict(row, _record_type="recently_played")
+            for row in rp_items
+            if isinstance(row, dict)
+        ]
+        # Advance cursor: cursors.after is the timestamp of the newest track.
+        cursors = payload.get("cursors")
+        next_cursor = (
+            str(cursors["after"])
+            if isinstance(cursors, dict) and cursors.get("after")
+            else _extract_next_cursor(payload, source_cursor)
+        )
+    except NonRetryableSyncError as exc:
+        # 403 from Spotify = Premium required for this endpoint; degrade gracefully.
+        recently_played_forbidden = True
+        logger.warning(
+            "Spotify recently-played requires Premium (403) — falling back to liked tracks only. detail=%s",
+            exc,
+        )
 
-    # Advance cursor: cursors.after is the timestamp of the newest track in the batch.
-    cursors = payload.get("cursors")
-    next_cursor = (
-        str(cursors["after"])
-        if isinstance(cursors, dict) and cursors.get("after")
-        else _extract_next_cursor(payload, source_cursor)
-    )
-
-    # Fetch liked/saved songs as well (first 50, best-effort).
+    # Fetch liked/saved songs (available to all Spotify accounts, no Premium needed).
     liked_rows: list[dict[str, Any]] = []
     try:
         liked_payload = _http_get_json(
@@ -645,6 +658,17 @@ def _fetch_spotify_records(access_token: str, source_cursor: str | None) -> tupl
             for item in liked_items
             if isinstance(item, dict)
         ]
+    except NonRetryableSyncError:
+        # If liked tracks also fails with a permanent auth error, and recently-played
+        # already failed too, there is nothing to sync — re-raise so the connector
+        # error_message is set and the task stops retrying.
+        if recently_played_forbidden:
+            raise NonRetryableSyncError(
+                "Spotify sync failed: recently-played requires Premium (403) and "
+                "liked-tracks also returned a permission error. "
+                "Check that the OAuth scopes include user-library-read."
+            )
+        raise
     except Exception:  # noqa: BLE001 — liked songs fetch is non-critical
         pass
 
@@ -881,6 +905,11 @@ def _http_get_json(
                 raise NonRetryableSyncError(
                     f"Google API permission/auth error ({response.status_code}) for {url}: {detail}"
                 ) from exc
+            if "api.spotify.com" in url and response.status_code in {401, 403}:
+                detail = _extract_http_error_message(response)
+                raise NonRetryableSyncError(
+                    f"Spotify API permission/auth error ({response.status_code}) for {url}: {detail}"
+                ) from exc
             raise
         data = response.json()
     if not isinstance(data, dict):
@@ -911,6 +940,11 @@ def _http_post_json(
                 detail = _extract_http_error_message(response)
                 raise NonRetryableSyncError(
                     f"Google API permission/auth error ({response.status_code}) for {url}: {detail}"
+                ) from exc
+            if "api.spotify.com" in url and response.status_code in {401, 403}:
+                detail = _extract_http_error_message(response)
+                raise NonRetryableSyncError(
+                    f"Spotify API permission/auth error ({response.status_code}) for {url}: {detail}"
                 ) from exc
             raise
         data = response.json()

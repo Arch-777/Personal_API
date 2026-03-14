@@ -357,3 +357,163 @@ def test_slack_connect_returns_authorize_url():
 	assert "state=" in body["url"]
 
 	app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Disconnect / DELETE integration tests
+# ---------------------------------------------------------------------------
+
+class _FakeDisconnectDb:
+	"""Minimal DB fake for disconnect endpoint tests."""
+
+	def __init__(self, connectors: list):
+		self._connectors = connectors
+		self.deleted_connector_platforms: list[str] = []
+		self.deleted_item_sources: list[str] = []
+		self.committed = False
+
+	def execute(self, stmt):
+		# Detect the kind of statement by inspecting the compiled string.
+		stmt_str = str(stmt)
+		if "DELETE" in stmt_str and "connectors" in stmt_str:
+			# Record which platforms were deleted via the IN clause values.
+			self.deleted_connector_platforms = [c.platform for c in self._connectors]
+			return _FakeResult()
+		if "DELETE" in stmt_str and "items" in stmt_str:
+			self.deleted_item_sources.append("__deleted__")
+			result = _FakeResult()
+			result.rowcount = 5  # type: ignore[attr-defined]
+			return result
+		# SELECT — return the stored connectors.
+		return _FakeResult(rows=self._connectors)
+
+	def commit(self):
+		self.committed = True
+
+
+def _make_connector(platform: str, user_id: uuid.UUID):
+	return SimpleNamespace(
+		id=uuid.uuid4(),
+		user_id=user_id,
+		platform=platform,
+		platform_email="test@example.com",
+		status="connected",
+		last_synced=None,
+		error_message=None,
+		metadata_json={},
+		created_at=datetime.now(UTC),
+		updated_at=datetime.now(UTC),
+	)
+
+
+def test_disconnect_notion_removes_connector():
+	user_id = uuid.uuid4()
+	connector = _make_connector("notion", user_id)
+	fake_db = _FakeDisconnectDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/notion")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["disconnected"] == ["notion"]
+	assert body["items_deleted"] == 0  # delete_data defaults to false
+	assert fake_db.committed is True
+
+	app.dependency_overrides.clear()
+
+
+def test_disconnect_google_platform_cascades_all_three_siblings():
+	"""Deleting 'gmail' with cascade_google=true removes gmail, drive, and gcal."""
+	user_id = uuid.uuid4()
+	connectors = [
+		_make_connector("gmail", user_id),
+		_make_connector("drive", user_id),
+		_make_connector("gcal", user_id),
+	]
+	fake_db = _FakeDisconnectDb(connectors=connectors)
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/gmail?cascade_google=true")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert set(body["disconnected"]) == {"gmail", "drive", "gcal"}
+	assert body["items_deleted"] == 0
+
+	app.dependency_overrides.clear()
+
+
+def test_disconnect_google_platform_no_cascade_removes_only_one():
+	"""Deleting 'gmail' with cascade_google=false removes only gmail."""
+	user_id = uuid.uuid4()
+	connector = _make_connector("gmail", user_id)
+	fake_db = _FakeDisconnectDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/gmail?cascade_google=false")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["disconnected"] == ["gmail"]
+
+	app.dependency_overrides.clear()
+
+
+def test_disconnect_returns_404_when_connector_not_found():
+	user_id = uuid.uuid4()
+	fake_db = _FakeDisconnectDb(connectors=[])  # no connectors
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/spotify")
+
+	assert response.status_code == 404
+
+	app.dependency_overrides.clear()
+
+
+def test_disconnect_with_delete_data_returns_items_deleted_count():
+	user_id = uuid.uuid4()
+	connector = _make_connector("slack", user_id)
+	fake_db = _FakeDisconnectDb(connectors=[connector])
+	current_user = SimpleNamespace(id=user_id)
+
+	app.dependency_overrides[get_db] = lambda: fake_db
+	app.dependency_overrides[get_current_user] = lambda: current_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/slack?delete_data=true")
+
+	assert response.status_code == 200
+	body = response.json()
+	assert body["disconnected"] == ["slack"]
+	assert body["items_deleted"] == 5  # matches rowcount set in fake
+
+	app.dependency_overrides.clear()
+
+
+def test_disconnect_returns_400_for_unknown_platform():
+	app.dependency_overrides[get_current_user] = _override_user
+
+	client = TestClient(app)
+	response = client.delete("/v1/connectors/unknown_service")
+
+	assert response.status_code == 400
+
+	app.dependency_overrides.clear()

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from api.core.auth import get_current_user
@@ -17,8 +17,9 @@ from api.core.config import get_settings
 from api.core.db import SessionLocal, get_db
 from api.core.security import create_access_token, decode_access_token
 from api.models.connector import Connector
+from api.models.item import Item
 from api.models.user import User
-from api.schemas.connector import ConnectorResponse, ConnectorSyncResponse
+from api.schemas.connector import ConnectorDisconnectResponse, ConnectorResponse, ConnectorSyncResponse
 from workers.celery_app import celery_app
 from workers.connector_sync import run_connector_sync
 
@@ -831,6 +832,83 @@ def get_connector(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Connector not found")
 
     return ConnectorResponse.model_validate(connector)
+
+
+@router.delete(
+    "/{platform}",
+    response_model=ConnectorDisconnectResponse,
+    summary="Disconnect an integration",
+)
+def disconnect_connector(
+    platform: str,
+    delete_data: bool = False,
+    cascade_google: bool = True,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ConnectorDisconnectResponse:
+    """Remove a connector and, optionally, all synced data for that platform.
+
+    - **delete_data** (default ``false``): when ``true``, also deletes all ``items``
+      (and their ``item_chunks`` via cascade) that were synced from this platform.
+    - **cascade_google** (default ``true``): when ``true`` and the platform is one of
+      ``gmail``, ``drive``, or ``gcal``, all three Google connectors are removed
+      together because they share a single OAuth token.
+    """
+    normalized_platform = platform.strip().lower()
+    if normalized_platform not in PLATFORM_TO_TASK:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported connector platform '{normalized_platform}'",
+        )
+
+    # Build the list of connector platforms to remove.
+    platforms_to_remove: list[str]
+    if cascade_google and normalized_platform in GOOGLE_CONNECTOR_PLATFORMS:
+        platforms_to_remove = list(GOOGLE_CONNECTOR_PLATFORMS)
+    else:
+        platforms_to_remove = [normalized_platform]
+
+    # Verify at least one connector row actually exists for this user.
+    connectors = db.execute(
+        select(Connector).where(
+            Connector.user_id == current_user.id,
+            Connector.platform.in_(platforms_to_remove),
+        )
+    ).scalars().all()
+
+    if not connectors:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No connected integration found for the requested platform",
+        )
+
+    actually_removed = [c.platform for c in connectors]
+
+    # Optionally wipe all synced items from the affected platforms.
+    items_deleted = 0
+    if delete_data:
+        for source_platform in actually_removed:
+            result = db.execute(
+                delete(Item).where(
+                    Item.user_id == current_user.id,
+                    Item.source == source_platform,
+                )
+            )
+            items_deleted += result.rowcount  # type: ignore[union-attr]
+
+    # Delete the connector rows themselves.
+    db.execute(
+        delete(Connector).where(
+            Connector.user_id == current_user.id,
+            Connector.platform.in_(actually_removed),
+        )
+    )
+    db.commit()
+
+    return ConnectorDisconnectResponse(
+        disconnected=sorted(actually_removed),
+        items_deleted=items_deleted,
+    )
 
 
 @router.post("/{platform}/bootstrap", response_model=ConnectorResponse, status_code=status.HTTP_201_CREATED)

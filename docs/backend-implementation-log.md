@@ -547,6 +547,39 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Redeploy notion worker and retry `workers.notion_worker.sync_notion`.
 
+## Step 34 - Spotify Free-Account 403 Retry Storm Fix
+- Status: Completed
+- Date: 2026-03-14
+- Problem: Non-premium Spotify accounts receive 403 on `/me/player/recently-played` (Premium required). The worker was retrying this permanently-failing request with exponential backoff, creating an infinite retry storm identical to the Google 403 issue fixed in Step 28.
+- Changes:
+  - backend/workers/connector_sync.py:
+    - `_http_get_json` and `_http_post_json`: Added `api.spotify.com` to the `NonRetryableSyncError` guard (mirrors the existing `googleapis.com` guard). Any 401/403 from Spotify now immediately stops retrying.
+    - `_fetch_spotify_records`: Wrapped the `recently-played` call in `try/except NonRetryableSyncError`. On 403, it logs a clear warning and falls back to liked/saved tracks only (available on free accounts via `user-library-read` scope). Only re-raises if *both* endpoints fail with permanent errors.
+- Behaviour after fix:
+  - Premium account: unchanged — recently-played + liked tracks both sync.
+  - Free account: recently-played skipped (logged as warning), liked/saved tracks sync successfully, connector stays `connected`.
+  - Broken token (401 on both): `NonRetryableSyncError` raised once, connector set to `error`, no retries.
+- Verification:
+  - `py -3 -m pytest tests/test_normalizers.py tests/test_api.py -q` → 34 passed.
+
+## Step 33 - Integration Management: Disconnect Endpoint
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/api/schemas/connector.py:
+    - Added `ConnectorDisconnectResponse` schema with `disconnected: list[str]` and `items_deleted: int`.
+  - backend/api/routers/connectors.py:
+    - Imported `delete` from SQLAlchemy and `Item` model.
+    - Imported `ConnectorDisconnectResponse` from schemas.
+    - Added `DELETE /connectors/{platform}` endpoint with two optional query params:
+      - `delete_data=false` — when `true`, deletes all synced `items` (and cascades to `item_chunks`) for the removed platform(s).
+      - `cascade_google=true` — when `true` and platform is `gmail`/`drive`/`gcal`, all three Google sibling connectors are removed together since they share a single OAuth token.
+    - Returns `ConnectorDisconnectResponse` confirming which platforms were disconnected and how many items were deleted.
+  - backend/tests/test_api.py:
+    - Added 6 new test cases covering: Notion disconnect, Google cascade (true/false), 404 on missing connector, `delete_data=true` item count, 400 on unknown platform.
+- Verification:
+  - `py -3 -m pytest tests/test_api.py -q` → 18 passed.
+
 ## Step 32 - Ollama RAG Health Check + Answer Mode Observability
 - Status: Completed
 - Date: 2026-03-14

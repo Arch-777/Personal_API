@@ -459,6 +459,53 @@ Authorization: Bearer <access_token>
 
 ---
 
+### DELETE `/v1/connectors/{platform}`
+Disconnect (remove) an integration and optionally wipe all synced data for it.
+
+**Headers**
+```
+Authorization: Bearer <access_token>
+```
+
+**Path params**
+| Param | Type | Description |
+|-------|------|-------------|
+| `platform` | string | `gmail` \| `drive` \| `gcal` \| `notion` \| `slack` \| `spotify` |
+
+**Query params**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `delete_data` | bool | `false` | When `true`, permanently deletes all synced `items` (and `item_chunks`) for the removed platform(s) |
+| `cascade_google` | bool | `true` | When `true` and the platform is any Google connector (`gmail`, `drive`, `gcal`), **all three** Google connectors are removed together — they share a single OAuth token |
+
+**Response `200`**
+```json
+{
+  "disconnected": ["drive", "gcal", "gmail"],
+  "items_deleted": 0
+}
+```
+
+- `disconnected` — sorted list of all connector platform rows that were removed
+- `items_deleted` — number of synced item rows deleted; always `0` when `delete_data=false`
+
+**Error cases**
+- `400` — Unknown or unsupported platform
+- `404` — No connector found for the requested platform
+
+**Examples**
+
+| Use case | Request |
+|----------|---------|
+| Remove Notion | `DELETE /v1/connectors/notion` |
+| Remove all Google connectors | `DELETE /v1/connectors/gmail` (cascade_google defaults to true) |
+| Remove Gmail only, keep Drive & GCal | `DELETE /v1/connectors/gmail?cascade_google=false` |
+| Remove Slack + wipe all Slack messages | `DELETE /v1/connectors/slack?delete_data=true` |
+
+> **Note on Google:** Because Gmail, Drive, and Google Calendar share one OAuth token, removing any one of them without `cascade_google=false` removes all three. The frontend should warn the user about this before confirming.
+
+---
+
 ### Google OAuth Connect Flow (Gmail / Drive / Google Calendar)
 
 **Step 1 — Get the consent URL**
