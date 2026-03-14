@@ -717,6 +717,28 @@ Track backend implementation progress step-by-step, with what changed, status, a
 - Next:
   - Optional: persist Google `sub` on the user model for immutable provider-account linking and safer email-change handling.
 
+## Step 48 - Postman Collection Endpoint Coverage Refactor
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - docs/postman/PersonalAPI.postman_collection.json:
+    - Added missing platform diagnostic endpoints:
+      - `GET /health/llm`
+      - `GET /openapi.json`
+      - `GET /docs`
+      - `GET /docs/oauth2-redirect`
+      - `GET /redoc`
+    - Added missing connector endpoint:
+      - `PATCH /v1/connectors/{platform}/auto-sync` as `Connector - Toggle Auto Sync`.
+    - Added collection variables for auto-sync toggling:
+      - `autoSyncEnabled`
+      - `cascadeGoogle`
+- Verification:
+  - Programmatic endpoint parity check against live FastAPI routes reports full coverage.
+  - Result: `Missing count: 0`.
+- Next:
+  - Optional: prune duplicate connector shortcut requests if you want a leaner collection focused only on canonical generic endpoints.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
