@@ -42,7 +42,7 @@ def send_chat_message(
 	)
 
 	engine = RAGEngine(db=db, user_id=current_user.id)
-	rag_result = engine.query(query=user_message, top_k=8, include_debug=include_debug)
+	rag_result = engine.query(query=user_message, top_k=6, include_debug=include_debug)
 
 	assistant_sources = list(rag_result.get("sources", []))
 	assistant_answer = str(rag_result.get("answer", ""))

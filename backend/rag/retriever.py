@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import lru_cache
+import math
 
 from sqlalchemy import Float, and_, cast, or_, select
 from sqlalchemy.orm import Session
@@ -109,7 +110,7 @@ class HybridRetriever:
 		intent = _infer_intent(normalized_query, query_tokens)
 		active_tokens = query_keywords if query_keywords else query_tokens
 		query_token_list = list(active_tokens)
-		effective_candidate_limit = max(20, min(candidate_limit, max(top_k * 12, 40)))
+		effective_candidate_limit = max(16, min(candidate_limit, max(top_k * 8, 32)))
 
 		if intent.requests_recent:
 			effective_limit = intent.requested_count or top_k
@@ -130,9 +131,14 @@ class HybridRetriever:
 		)
 		if chunk_candidates:
 			deduped = _dedupe_and_group(chunk_candidates)
+			if len(deduped) > top_k:
+				deduped = _apply_rank_fusion(deduped, include_debug=include_debug)
 			reranked = _rerank_grouped_results(deduped, intent=intent)
 			reranked.sort(key=lambda item: (item.score, _coerce_sort_datetime(item.item_date)), reverse=True)
-			return reranked[:top_k]
+			if len(reranked) <= top_k:
+				return reranked[:top_k]
+			diversified = _mmr_select(reranked, top_k=top_k)
+			return diversified[:top_k]
 
 		stmt = select(Item).where(Item.user_id == user_id)
 		if type_filter:
@@ -190,7 +196,7 @@ class HybridRetriever:
 					item_date=row.item_date,
 					file_path=row.file_path,
 					score=score,
-					debug=score_debug if include_debug else {},
+					debug=score_debug,
 					canonical_key=_canonical_group_key(
 						source=row.source,
 							source_id=getattr(row, "source_id", None),
@@ -203,9 +209,14 @@ class HybridRetriever:
 
 		combined = chunk_candidates + scored
 		deduped = _dedupe_and_group(combined)
+		if len(deduped) > top_k:
+			deduped = _apply_rank_fusion(deduped, include_debug=include_debug)
 		reranked = _rerank_grouped_results(deduped, intent=intent, include_debug=include_debug)
 		reranked.sort(key=lambda item: (item.score, _coerce_sort_datetime(item.item_date)), reverse=True)
-		return reranked[:top_k]
+		if len(reranked) <= top_k:
+			return reranked[:top_k]
+		diversified = _mmr_select(reranked, top_k=top_k)
+		return diversified[:top_k]
 
 	def _retrieve_chunk_candidates(
 		self,
@@ -272,7 +283,7 @@ class HybridRetriever:
 						metadata=item.metadata_json or {},
 						sender_name=item.sender_name,
 					),
-					debug={"distance": float(distance or 1.0)} if include_debug else {},
+					debug={"distance": float(distance or 1.0)},
 				)
 			)
 		return results
@@ -627,6 +638,102 @@ def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent, i
 			result.debug["rerank_adjustment"] = round(adjustment, 6)
 			result.debug["reranked_score"] = round(float(result.score), 6)
 	return results
+
+
+def _apply_rank_fusion(results: list[RetrievedItem], include_debug: bool = False, k: int = 20) -> list[RetrievedItem]:
+	if len(results) <= 1:
+		return results
+
+	semantic_rank = sorted(
+		results,
+		key=lambda item: _semantic_component(item),
+		reverse=True,
+	)
+	lexical_rank = sorted(
+		results,
+		key=lambda item: _lexical_component(item),
+		reverse=True,
+	)
+
+	semantic_pos = {item.id: index + 1 for index, item in enumerate(semantic_rank)}
+	lexical_pos = {item.id: index + 1 for index, item in enumerate(lexical_rank)}
+
+	for item in results:
+		s_rank = semantic_pos[item.id]
+		l_rank = lexical_pos[item.id]
+		rrf_semantic = 1.0 / float(k + s_rank)
+		rrf_lexical = 1.0 / float(k + l_rank)
+		fused_boost = (0.7 * rrf_semantic) + (0.3 * rrf_lexical)
+		item.score += (fused_boost * 3.0)
+		if include_debug:
+			item.debug["rrf_semantic_rank"] = s_rank
+			item.debug["rrf_lexical_rank"] = l_rank
+			item.debug["rrf_boost"] = round(fused_boost * 3.0, 6)
+
+	return results
+
+
+def _mmr_select(results: list[RetrievedItem], top_k: int, lambda_relevance: float = 0.75) -> list[RetrievedItem]:
+	if top_k <= 0 or not results:
+		return []
+	if len(results) <= top_k:
+		return results
+
+	candidate_pool = results[: max(top_k * 3, top_k)]
+	selected: list[RetrievedItem] = []
+	token_cache = [_preview_tokens(item.preview) for item in candidate_pool]
+
+	while candidate_pool and len(selected) < top_k:
+		if not selected:
+			selected.append(candidate_pool.pop(0))
+			token_cache.pop(0)
+			continue
+
+		selected_token_sets = [_preview_tokens(item.preview) for item in selected]
+		best_index = 0
+		best_score = -math.inf
+		for index, candidate in enumerate(candidate_pool):
+			candidate_tokens = token_cache[index]
+			redundancy = max((_jaccard_tokens(candidate_tokens, chosen_tokens) for chosen_tokens in selected_token_sets), default=0.0)
+			mmr_score = (lambda_relevance * candidate.score) - ((1.0 - lambda_relevance) * redundancy)
+			if mmr_score > best_score:
+				best_score = mmr_score
+				best_index = index
+
+		selected.append(candidate_pool.pop(best_index))
+		token_cache.pop(best_index)
+
+	return selected
+
+
+def _semantic_component(item: RetrievedItem) -> float:
+	debug = item.debug if isinstance(item.debug, dict) else {}
+	if "distance" in debug:
+		return max(0.0, 1.0 - float(debug.get("distance") or 1.0))
+	if "embedding_bonus" in debug:
+		return max(0.0, float(debug.get("embedding_bonus") or 0.0))
+	return max(0.0, float(item.score))
+
+
+def _lexical_component(item: RetrievedItem) -> float:
+	debug = item.debug if isinstance(item.debug, dict) else {}
+	if "lexical_score" in debug:
+		return max(0.0, float(debug.get("lexical_score") or 0.0))
+	return max(0.0, float(item.score))
+
+
+def _preview_tokens(text: str | None) -> set[str]:
+	return _remove_stopwords(_tokenize(_normalize(text)))
+
+
+def _jaccard_tokens(left_tokens: set[str], right_tokens: set[str]) -> float:
+	if not left_tokens or not right_tokens:
+		return 0.0
+	intersection = len(left_tokens & right_tokens)
+	union = len(left_tokens | right_tokens)
+	if union == 0:
+		return 0.0
+	return intersection / union
 
 
 def _canonical_group_key(

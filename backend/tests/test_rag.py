@@ -12,7 +12,7 @@ from rag.context import ContextBuilder
 from rag.embedder import DeterministicEmbedder, cosine_similarity
 from rag.engine import RAGEngine
 from rag.generator import OllamaGenerator
-from rag.retriever import HybridRetriever, RetrievedItem
+from rag.retriever import HybridRetriever, RetrievedItem, _mmr_select
 
 
 class _FakeScalarResult:
@@ -575,6 +575,45 @@ def test_hybrid_retriever_prefers_chunk_candidates_over_item_fallback():
 	assert len(results) == 1
 	assert results[0].source == "notion"
 	assert results[0].chunk_id == "item:1:0"
+
+
+def test_mmr_select_reduces_near_duplicate_items():
+	items = [
+		RetrievedItem(
+			id="1",
+			type="document",
+			source="drive",
+			title="Roadmap A",
+			content="Roadmap planning and milestones",
+			summary="Roadmap planning",
+			score=1.0,
+		),
+		RetrievedItem(
+			id="2",
+			type="document",
+			source="drive",
+			title="Roadmap B",
+			content="Roadmap planning and milestones for team",
+			summary="Roadmap planning",
+			score=0.99,
+		),
+		RetrievedItem(
+			id="3",
+			type="document",
+			source="notion",
+			title="Risk Register",
+			content="Key risks and mitigations",
+			summary="Risk log",
+			score=0.95,
+		),
+	]
+
+	selected = _mmr_select(items, top_k=2)
+	selected_ids = {item.id for item in selected}
+
+	assert len(selected) == 2
+	assert "1" in selected_ids
+	assert "3" in selected_ids
 
 
 def test_context_builder_collects_sources_and_links():

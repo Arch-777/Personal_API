@@ -885,6 +885,39 @@ Track backend implementation progress step-by-step, with what changed, status, a
     - "last 5 slack messages from #engineering"
     - "only gmail messages about invoices"
 
+## Step 54 - RAG Retrieval Upgrade: Rank Fusion + MMR Diversification
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/retriever.py:
+    - Added weighted reciprocal-rank fusion pass (`_apply_rank_fusion`) to blend semantic and lexical ordering signals before final rerank.
+    - Added lightweight MMR selection (`_mmr_select`) to reduce near-duplicate top-k results and increase context diversity.
+    - Preserved intent/source routing behavior while applying fusion/diversification in both chunk-first and combined retrieval paths.
+    - Kept debug score components available internally for fusion without changing non-debug API response shape.
+  - backend/tests/test_rag.py:
+    - Added regression test `test_mmr_select_reduces_near_duplicate_items` to confirm diversified selection behavior.
+- Verification:
+  - Targeted RAG suite passed: `py -3 -m pytest tests/test_rag.py -q` -> 26 passed in 11.76s.
+- Next:
+  - Optional: tune fusion weights and MMR lambda via config if query distributions shift in production.
+
+## Step 55 - RAG Query Latency Optimization Pass
+- Status: Completed
+- Date: 2026-03-14
+- Changes:
+  - backend/rag/retriever.py:
+    - Reduced retrieval fan-out budget from `top_k * 12` to `top_k * 8` (with floor adjustment) to cut scoring work per query.
+    - Added small-result fast paths: skip rank fusion/MMR when candidate count is already within requested `top_k`.
+    - Optimized MMR redundancy scoring by precomputing token sets and using token-level Jaccard directly.
+  - backend/api/routers/chat.py:
+    - Reduced chat retrieval default from `top_k=8` to `top_k=6` to improve response latency while keeping multi-source grounding.
+- Verification:
+  - Targeted tests passed:
+    - `py -3 -m pytest tests/test_rag.py tests/test_rag_benchmark.py tests/test_api.py -k "rag or chat" -q`
+    - Result: 31 passed, 35 deselected in 13.00s.
+- Next:
+  - Optional: expose `chat_top_k` and retriever candidate budget as env settings for production tuning without code changes.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract
