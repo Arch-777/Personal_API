@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
+
+
+logger = logging.getLogger(__name__)
 
 
 class DeterministicEmbedder:
@@ -36,6 +40,72 @@ class DeterministicEmbedder:
 		return [self.embed_text(text) for text in texts]
 
 
+class SemanticEmbedder:
+	"""Semantic embedder with lightweight local model support and deterministic fallback."""
+
+	def __init__(
+		self,
+		provider: str = "fastembed",
+		model_name: str = "BAAI/bge-small-en-v1.5",
+		dimensions: int = 1536,
+	):
+		self.provider = (provider or "deterministic").strip().lower()
+		self.model_name = (model_name or "BAAI/bge-small-en-v1.5").strip()
+		self.dimensions = max(8, int(dimensions))
+		self._fallback = DeterministicEmbedder(dimensions=self.dimensions)
+		self._embedding_model = None
+
+		if self.provider == "deterministic":
+			return
+
+		if self.provider == "fastembed":
+			try:
+				from fastembed import TextEmbedding  # type: ignore
+
+				self._embedding_model = TextEmbedding(model_name=self.model_name)
+			except Exception as exc:  # noqa: BLE001
+				logger.warning(
+					"Semantic embedder provider initialization failed; falling back to deterministic embeddings: %s",
+					exc,
+				)
+				self.provider = "deterministic"
+				self._embedding_model = None
+			return
+
+		logger.warning("Unknown embedding provider '%s'; using deterministic fallback", self.provider)
+		self.provider = "deterministic"
+
+	def embed_text(self, text: str) -> list[float]:
+		return self.embed_texts([text])[0]
+
+	def embed_texts(self, texts: list[str]) -> list[list[float]]:
+		if not texts:
+			return []
+
+		if self.provider != "fastembed" or self._embedding_model is None:
+			return self._fallback.embed_texts(texts)
+
+		normalized_texts = [" ".join(text.split()).strip() for text in texts]
+		try:
+			raw_vectors = list(self._embedding_model.embed(normalized_texts))
+		except Exception as exc:  # noqa: BLE001
+			logger.warning(
+				"Semantic embedding generation failed; using deterministic fallback for this batch: %s",
+				exc,
+			)
+			return self._fallback.embed_texts(texts)
+
+		vectors: list[list[float]] = []
+		for vector in raw_vectors:
+			values = [float(value) for value in vector]
+			values = _fit_dimensions(values, self.dimensions)
+			vectors.append(_l2_normalize(values))
+
+		if len(vectors) != len(texts):
+			return self._fallback.embed_texts(texts)
+		return vectors
+
+
 def cosine_similarity(vector_a: list[float] | None, vector_b: list[float] | None) -> float:
 	if not vector_a or not vector_b:
 		return 0.0
@@ -55,4 +125,12 @@ def _l2_normalize(vector: list[float]) -> list[float]:
 	if norm == 0:
 		return [0.0 for _ in vector]
 	return [value / norm for value in vector]
+
+
+def _fit_dimensions(vector: list[float], dimensions: int) -> list[float]:
+	if len(vector) == dimensions:
+		return vector
+	if len(vector) > dimensions:
+		return vector[:dimensions]
+	return vector + [0.0] * (dimensions - len(vector))
 

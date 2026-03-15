@@ -139,6 +139,43 @@ def health_llm():
 	)
 
 
+@app.get("/health/rag")
+def health_rag():
+	current_settings = get_settings()
+	return {
+		"llm_enabled": bool(current_settings.rag_llm_enabled),
+		"llm_provider": current_settings.rag_llm_provider,
+		"embedding_provider": current_settings.rag_embedding_provider,
+		"embedding_model": current_settings.rag_embedding_model,
+		"embedding_dimensions": int(current_settings.rag_embedding_dimensions),
+		"grounding": {
+			"min_top_score": float(current_settings.rag_grounding_min_top_score),
+			"min_avg_score": float(current_settings.rag_grounding_min_avg_score),
+		},
+		"retrieval": {
+			"semantic_candidate_limit": int(current_settings.rag_semantic_candidate_limit),
+			"lexical_candidate_limit": int(current_settings.rag_lexical_candidate_limit),
+			"rrf_k": int(current_settings.rag_rrf_k),
+			"rrf_semantic_weight": float(current_settings.rag_rrf_semantic_weight),
+			"rrf_lexical_weight": float(current_settings.rag_rrf_lexical_weight),
+			"rrf_boost": float(current_settings.rag_rrf_boost),
+		},
+		"chunking": {
+			"max_tokens": int(current_settings.rag_chunk_max_tokens),
+			"overlap_tokens": int(current_settings.rag_chunk_overlap_tokens),
+		},
+		"rewrite": {
+			"enabled": bool(current_settings.rag_query_rewrite_enabled),
+			"max_variants": int(current_settings.rag_query_rewrite_max_variants),
+		},
+		"reranker": {
+			"enabled": bool(current_settings.rag_reranker_enabled),
+			"top_n": int(current_settings.rag_reranker_top_n),
+			"weight": float(current_settings.rag_reranker_weight),
+		},
+	}
+
+
 include_router_if_available("api.routers.auth")
 include_router_if_available("api.routers.emails", prefix=settings.api_prefix)
 include_router_if_available("api.routers.documents", prefix=settings.api_prefix)

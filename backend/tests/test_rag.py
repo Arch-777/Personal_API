@@ -10,9 +10,11 @@ from api.main import app
 from rag.chunker import chunk_text
 from rag.context import ContextBuilder
 from rag.embedder import DeterministicEmbedder, cosine_similarity
-from rag.engine import RAGEngine
+from rag.engine import RAGEngine, _compose_retrieval_query
 from rag.generator import OllamaGenerator
-from rag.retriever import HybridRetriever, RetrievedItem, _mmr_select
+from rag.query_rewriter import QueryRewriter
+from rag.reranker import LightweightReranker
+from rag.retriever import HybridRetriever, RetrievedItem, _apply_rank_fusion, _mmr_select
 
 
 class _FakeScalarResult:
@@ -577,6 +579,243 @@ def test_hybrid_retriever_prefers_chunk_candidates_over_item_fallback():
 	assert results[0].chunk_id == "item:1:0"
 
 
+def test_hybrid_retriever_uses_lexical_candidates_when_semantic_missing():
+	now = datetime.now(UTC)
+
+	class _NoFallbackDb:
+		def execute(self, _stmt):
+			raise AssertionError("Item fallback should not run when lexical candidates exist")
+
+	class _LexicalOnlyRetriever(HybridRetriever):
+		def _retrieve_chunk_candidates(self, *args, **kwargs):
+			return []
+
+		def _retrieve_lexical_chunk_candidates(self, *args, **kwargs):
+			return [
+				RetrievedItem(
+					id=str(uuid.uuid4()),
+					type="document",
+					source="drive",
+					source_id="doc-77",
+					title="Risk policy",
+					summary="Lexical match",
+					content="risk controls",
+					metadata={},
+					item_date=now,
+					file_path="/users/u/data/drive/risk.json",
+					score=0.8,
+					chunk_id="item:77:0",
+					chunk_index=0,
+					chunk_text="risk controls and guardrails",
+				)
+			]
+
+	retriever = _LexicalOnlyRetriever(_NoFallbackDb())
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="risk policy", top_k=5)
+
+	assert len(results) == 1
+	assert results[0].source == "drive"
+	assert results[0].chunk_id == "item:77:0"
+
+
+def test_apply_rank_fusion_prefers_semantic_or_lexical_by_configurable_weights():
+	semantic_strong = RetrievedItem(
+		id="sem",
+		type="document",
+		source="notion",
+		score=1.0,
+		debug={"distance": 0.05, "lexical_score": 0.01},
+	)
+	lexical_strong = RetrievedItem(
+		id="lex",
+		type="document",
+		source="drive",
+		score=1.0,
+		debug={"distance": 0.8, "lexical_score": 0.9},
+	)
+
+	semantic_weighted = _apply_rank_fusion(
+		[semantic_strong, lexical_strong],
+		semantic_weight=0.9,
+		lexical_weight=0.1,
+		boost=8.0,
+	)
+	semantic_score = next(item.score for item in semantic_weighted if item.id == "sem")
+	lexical_score = next(item.score for item in semantic_weighted if item.id == "lex")
+	assert semantic_score > lexical_score
+
+	semantic_strong_2 = RetrievedItem(
+		id="sem2",
+		type="document",
+		source="notion",
+		score=1.0,
+		debug={"distance": 0.05, "lexical_score": 0.01},
+	)
+	lexical_strong_2 = RetrievedItem(
+		id="lex2",
+		type="document",
+		source="drive",
+		score=1.0,
+		debug={"distance": 0.8, "lexical_score": 0.9},
+	)
+	lexical_weighted = _apply_rank_fusion(
+		[semantic_strong_2, lexical_strong_2],
+		semantic_weight=0.1,
+		lexical_weight=0.9,
+		boost=8.0,
+	)
+	semantic_score_2 = next(item.score for item in lexical_weighted if item.id == "sem2")
+	lexical_score_2 = next(item.score for item in lexical_weighted if item.id == "lex2")
+	assert lexical_score_2 > semantic_score_2
+
+
+def test_query_rewriter_expands_domain_hints():
+	rewriter = QueryRewriter(enabled=True, max_variants=3)
+	variants = rewriter.rewrite("show docs")
+
+	assert len(variants) >= 1
+	assert any("documents" in variant for variant in variants)
+	assert any("notion" in variant or "drive" in variant for variant in variants)
+
+
+def test_compose_retrieval_query_blends_recent_session_turns():
+	retrieval_query = _compose_retrieval_query(
+		"what about last week",
+		[
+			{"role": "user", "content": "Show my GitHub repositories"},
+			{"role": "assistant", "content": "Here are your top repos and recent updates"},
+		],
+	)
+
+	assert "what about last week" in retrieval_query
+	assert "Context from current session" in retrieval_query
+	assert "GitHub repositories" in retrieval_query
+	assert "top repos and recent updates" not in retrieval_query
+
+
+def test_hybrid_retriever_prefers_github_when_query_mentions_repositories():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="repository",
+			source="github",
+			source_id="repo-1",
+			title="Personal_API",
+			summary="Main backend repository",
+			content="Includes API, workers, and RAG",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+			sender_name=None,
+		),
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="email",
+			source="gmail",
+			source_id="msg-1",
+			title="Project update",
+			summary="Summary notes",
+			content="General status update",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+			sender_name=None,
+		),
+	]
+
+	db = FakeRetrieverDb(rows)
+	retriever = HybridRetriever(db)
+	results = retriever.retrieve(user_id=uuid.uuid4(), query="which github repositories did I work on", top_k=5)
+
+	assert len(results) >= 1
+	assert results[0].source == "github"
+
+
+def test_rag_engine_uses_rewritten_variant_when_original_misses():
+	class _StubEmbedder:
+		def embed_text(self, _text: str):
+			return [0.0] * 8
+
+	class _RewriteAwareRetriever:
+		def __init__(self):
+			self.queries: list[str] = []
+
+		def retrieve(
+			self,
+			user_id,
+			query,
+			top_k=8,
+			type_filter=None,
+			query_embedding=None,
+			include_debug=False,
+			date_after=None,
+		):
+			self.queries.append(query)
+			if "gmail" not in query:
+				return []
+			return [
+				RetrievedItem(
+					id="email-1",
+					type="email",
+					source="gmail",
+					title="Invoice",
+					content="Invoice from vendor",
+					summary="Invoice received",
+					score=0.9,
+				)
+			]
+
+	retriever = _RewriteAwareRetriever()
+	engine = RAGEngine(
+		db=SimpleNamespace(),
+		user_id=uuid.uuid4(),
+		embedder=_StubEmbedder(),
+		retriever=retriever,
+		query_rewriter=QueryRewriter(enabled=True, max_variants=3),
+		reranker=LightweightReranker(enabled=False),
+		use_llm=False,
+	)
+
+	result = engine.query("show mail", top_k=5)
+
+	assert "answer" in result
+	assert len(result["sources"]) == 1
+	assert any("gmail" in query for query in retriever.queries)
+
+
+def test_lightweight_reranker_reorders_by_query_alignment():
+	reranker = LightweightReranker(enabled=True, weight=1.0, top_n=5)
+	items = [
+		RetrievedItem(
+			id="1",
+			type="document",
+			source="notion",
+			title="Random Notes",
+			content="general unrelated text",
+			summary="misc",
+			score=1.0,
+		),
+		RetrievedItem(
+			id="2",
+			type="document",
+			source="drive",
+			title="Incident response playbook",
+			content="incident response runbook and mitigation",
+			summary="response plan",
+			score=0.8,
+		),
+	]
+
+	reranked = reranker.rerank("incident response", items, include_debug=True)
+	assert reranked[0].id == "2"
+	assert reranked[0].debug.get("reranker_applied") is True
+
+
 def test_mmr_select_reduces_near_duplicate_items():
 	items = [
 		RetrievedItem(
@@ -748,15 +987,46 @@ def test_rag_engine_uses_llm_generator_when_enabled():
 		def generate(self, query: str, context_text: str) -> str:
 			assert "architecture" in query.lower()
 			assert "notion/document" in context_text
-			return "LLM synthesized answer"
+			return "LLM synthesized answer [1]"
 
 	db = FakeRetrieverDb(rows)
 	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=_FakeGenerator(), use_llm=True)
-	result = engine.query("Explain architecture", top_k=5)
+	result = engine.query("show my architecture notes", top_k=5)
 
-	assert result["answer"] == "LLM synthesized answer"
+	assert result["answer"] == "LLM synthesized answer [1]"
 	assert result["answer_mode"] == "llm"
 	assert len(result["sources"]) == 1
+
+
+def test_rag_engine_falls_back_when_llm_answer_has_no_valid_citations():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Architecture",
+			summary="Architecture summary",
+			content="System has API, workers and retrieval components",
+			metadata_json={"file_path": "/users/u/data/notion/architecture.json"},
+			item_date=now,
+			file_path="/users/u/data/notion/architecture.json",
+			embedding=None,
+			created_at=now,
+		)
+	]
+
+	class _InvalidCitationGenerator:
+		def generate(self, query: str, context_text: str) -> str:
+			return "Ungrounded answer with no source markers"
+
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=_InvalidCitationGenerator(), use_llm=True)
+	result = engine.query("show my architecture notes", top_k=5)
+
+	assert result["answer_mode"] == "fallback"
+	assert isinstance(result["answer"], str)
+	assert result["answer"]
 
 
 def test_rag_engine_returns_fallback_answer_mode_when_llm_fails():
@@ -805,8 +1075,58 @@ def test_rag_engine_skips_llm_when_no_retrieved_sources():
 	result = engine.query("what is my architecture", top_k=5)
 
 	assert gen.called is False
-	assert result["answer_mode"] == "deterministic"
-	assert "could not find relevant items" in result["answer"].lower()
+	assert result["answer_mode"] == "abstain"
+	assert "cannot answer from your data" in result["answer"].lower()
+
+
+def test_context_builder_compose_answer_returns_citation_based_output():
+	builder = ContextBuilder()
+	retrieved = [
+		RetrievedItem(
+			id="1",
+			type="document",
+			source="notion",
+			title="Roadmap",
+			content="Q2 milestones include auth hardening and search relevance tuning.",
+			summary="Roadmap summary",
+			metadata={},
+			item_date=None,
+			file_path=None,
+			score=0.95,
+		),
+	]
+
+	answer = builder.compose_answer("roadmap", retrieved)
+
+	assert "grounded only in your indexed data" in answer.lower()
+	assert "[1]" in answer
+
+
+def test_rag_engine_returns_abstain_when_scores_below_grounding_threshold():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Roadmap",
+			summary="Roadmap summary",
+			content="Q1 planning notes",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+		)
+	]
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(db=db, user_id=uuid.uuid4())
+	engine.min_top_score = 10.0
+	engine.min_avg_score = 10.0
+	result = engine.query("roadmap", top_k=5)
+
+	assert result["answer_mode"] == "abstain"
+	assert "cannot answer" in result["answer"].lower()
 
 
 def test_ollama_prompt_contains_grounding_and_citation_rules():
@@ -851,7 +1171,7 @@ def test_chat_endpoint_returns_rag_payload(monkeypatch):
 	monkeypatch.setattr(
 		chat_router.RAGEngine,
 		"query",
-		lambda self, query, top_k=8, type_filter=None, include_debug=False: {
+		lambda self, query, top_k=8, type_filter=None, include_debug=False, conversation_history=None: {
 			"answer": "Synthetic answer",
 			"sources": [
 				{
@@ -890,7 +1210,7 @@ def test_chat_endpoint_debug_mode_returns_source_debug(monkeypatch):
 	monkeypatch.setattr(
 		chat_router.RAGEngine,
 		"query",
-		lambda self, query, top_k=8, type_filter=None, include_debug=False: {
+		lambda self, query, top_k=8, type_filter=None, include_debug=False, conversation_history=None: {
 			"answer": "Synthetic answer",
 			"sources": [
 				{

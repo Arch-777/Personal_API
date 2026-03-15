@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 
@@ -15,24 +16,24 @@ class TextChunk:
 
 def chunk_text(
 	text: str,
-	max_tokens: int = 512,
-	overlap_tokens: int = 50,
+	max_tokens: int = 240,
+	overlap_tokens: int = 40,
 	chunk_id_prefix: str = "chunk",
 	metadata: dict[str, Any] | None = None,
 ) -> list[TextChunk]:
-	"""Split text into overlapping token windows.
+	"""Split text into sentence-aware overlapping token windows.
 
-	Tokenization is whitespace-based to avoid external dependencies.
+	Tokenization remains whitespace-based to avoid external dependencies.
 	"""
-	normalized = " ".join(text.split())
-	if not normalized:
+	segments = _prepare_segments(text)
+	if not segments:
 		return []
 
 	safe_max_tokens = max(1, max_tokens)
 	safe_overlap = max(0, min(overlap_tokens, safe_max_tokens - 1))
 	stride = safe_max_tokens - safe_overlap
 
-	tokens = normalized.split(" ")
+	tokens = " ".join(segments).split(" ")
 	chunks: list[TextChunk] = []
 
 	index = 0
@@ -40,7 +41,7 @@ def chunk_text(
 	base_metadata = dict(metadata or {})
 
 	while start < len(tokens):
-		end = min(start + safe_max_tokens, len(tokens))
+		end = _find_preferred_boundary(tokens=tokens, start=start, max_tokens=safe_max_tokens)
 		chunk_tokens = tokens[start:end]
 		chunk_text_value = " ".join(chunk_tokens)
 		chunk_metadata = dict(base_metadata)
@@ -73,8 +74,8 @@ def chunk_item_content(
 	content: str,
 	source: str,
 	item_type: str,
-	max_tokens: int = 512,
-	overlap_tokens: int = 50,
+	max_tokens: int = 240,
+	overlap_tokens: int = 40,
 ) -> list[TextChunk]:
 	return chunk_text(
 		text=content,
@@ -87,4 +88,36 @@ def chunk_item_content(
 			"type": item_type,
 		},
 	)
+
+
+def _prepare_segments(text: str) -> list[str]:
+	raw = (text or "").strip()
+	if not raw:
+		return []
+
+	paragraphs = [part.strip() for part in re.split(r"\n{2,}", raw) if part.strip()]
+	segments: list[str] = []
+	for paragraph in paragraphs:
+		sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", paragraph) if part.strip()]
+		if not sentences:
+			continue
+		segments.extend(sentences)
+
+	if not segments:
+		segments = [" ".join(raw.split())]
+
+	return [" ".join(segment.split()) for segment in segments if segment.strip()]
+
+
+def _find_preferred_boundary(tokens: list[str], start: int, max_tokens: int) -> int:
+	hard_end = min(start + max_tokens, len(tokens))
+	if hard_end >= len(tokens):
+		return hard_end
+
+	for index in range(hard_end, min(hard_end + 24, len(tokens))):
+		token = tokens[index - 1]
+		if token.endswith((".", "?", "!")):
+			return index
+
+	return hard_end
 

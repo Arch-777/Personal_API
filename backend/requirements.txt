@@ -13,4 +13,5 @@ celery
 pgvector
 httpx<0.28
 pytest
+fastembed
 

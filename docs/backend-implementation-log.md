@@ -519,6 +519,130 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Redeploy workers and API so new exception flow is active.
   - Reconnect Google Drive/GCal with the matching platform OAuth flow and retry sync.
 
+## Step 47 - RAG Phase 1 (Semantic Embeddings + Grounded Abstain + Extractive Citations)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/rag/embedder.py:
+    - Added `SemanticEmbedder` with `fastembed` support (`BAAI/bge-small-en-v1.5`) and deterministic fallback for low-resource local environments.
+    - Added vector dimension fitting to preserve compatibility with existing pgvector schema (`vector(1536)`).
+  - backend/api/core/config.py:
+    - Added configurable RAG embedding settings (`RAG_EMBEDDING_PROVIDER`, `RAG_EMBEDDING_MODEL`, `RAG_EMBEDDING_DIMENSIONS`).
+    - Added grounding thresholds (`RAG_GROUNDING_MIN_TOP_SCORE`, `RAG_GROUNDING_MIN_AVG_SCORE`).
+  - backend/rag/indexer.py:
+    - Switched default indexing embedder from deterministic-only to configurable semantic embedder with safe fallback.
+  - backend/rag/engine.py:
+    - Added grounding confidence computation and strict confidence gate.
+    - Added explicit `abstain` answer mode when evidence quality is weak, preventing non-grounded responses.
+  - backend/rag/context.py:
+    - Updated deterministic response composition to citation-oriented extractive output from retrieved evidence only.
+    - Added dedicated abstain response helper with actionable refinement guidance.
+  - backend/requirements.txt:
+    - Added `fastembed` dependency for lightweight local semantic embeddings.
+  - backend/tests/test_rag.py:
+    - Updated no-source behavior expectation to `abstain` mode.
+    - Added tests for citation-based deterministic output and weak-evidence abstain behavior.
+- Verification:
+  - Focused RAG test suite passed: 28 passed in 45.65s.
+  - Command used: `Set-Location backend; py -3 -m pytest tests/test_rag.py -q`
+- Next:
+  - Phase 2: add lexical FTS retrieval branch + calibrated fusion weights and stronger chunking for better recall precision.
+
+## Step 48 - RAG Env Parity Sync (.env + .env.example + Main Health)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/.env.example:
+    - Added missing Phase 1 RAG env vars:
+      - `RAG_LLM_SYSTEM_PROMPT`
+      - `RAG_EMBEDDING_PROVIDER`
+      - `RAG_EMBEDDING_MODEL`
+      - `RAG_EMBEDDING_DIMENSIONS`
+      - `RAG_GROUNDING_MIN_TOP_SCORE`
+      - `RAG_GROUNDING_MIN_AVG_SCORE`
+  - backend/.env:
+    - Added the same RAG env vars for local runtime parity.
+  - backend/api/main.py:
+    - Added `GET /health/rag` endpoint to expose effective RAG mode and threshold settings at runtime.
+- Verification:
+  - Existing focused RAG tests remain green (`tests/test_rag.py`: 28 passed).
+  - API suite run surfaced one unrelated pre-existing failure in GitHub callback redirect test (`tests/test_api.py::test_github_callback_redirects_to_frontend_on_success`).
+- Next:
+  - Begin Phase 2 with lexical FTS retrieval path and calibrated fusion.
+
+## Step 49 - RAG Phase 2 (Lexical FTS + Calibrated Fusion + Better Chunking)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/rag/retriever.py:
+    - Added lexical FTS candidate retrieval over `item_chunks.content_tsv` using PostgreSQL `websearch_to_tsquery` and `ts_rank_cd`.
+    - Merged semantic vector candidates and lexical FTS candidates before grouping/reranking.
+    - Upgraded RRF rank fusion to configurable weights/boost (`semantic_weight`, `lexical_weight`, `k`, `boost`).
+    - Added stable rank identity for chunk-level fusion so chunk-scoped ranking is reliable.
+  - backend/rag/engine.py:
+    - Wired retriever construction to use new configurable Phase 2 retrieval tuning settings.
+  - backend/rag/chunker.py:
+    - Updated defaults to smaller, retrieval-friendly chunks (`max_tokens=240`, `overlap_tokens=40`).
+    - Added sentence-aware segmentation and preferred sentence-boundary chunk endings for better chunk coherence.
+  - backend/rag/indexer.py:
+    - Wired chunk sizing to settings (`RAG_CHUNK_MAX_TOKENS`, `RAG_CHUNK_OVERLAP_TOKENS`).
+  - backend/api/core/config.py:
+    - Added Phase 2 retrieval/chunk settings:
+      - `RAG_SEMANTIC_CANDIDATE_LIMIT`
+      - `RAG_LEXICAL_CANDIDATE_LIMIT`
+      - `RAG_RRF_K`
+      - `RAG_RRF_SEMANTIC_WEIGHT`
+      - `RAG_RRF_LEXICAL_WEIGHT`
+      - `RAG_RRF_BOOST`
+      - `RAG_CHUNK_MAX_TOKENS`
+      - `RAG_CHUNK_OVERLAP_TOKENS`
+  - backend/.env.example and backend/.env:
+    - Added all new Phase 2 RAG environment variables for parity.
+  - backend/api/main.py:
+    - Extended `GET /health/rag` response to include retrieval and chunking runtime settings.
+  - backend/tests/test_rag.py:
+    - Added lexical-only retrieval path test to ensure no fallback query runs when lexical candidates exist.
+    - Added configurable fusion weighting test to verify semantic-vs-lexical ranking behavior changes with weight tuning.
+- Verification:
+  - Focused RAG test suite passed: 30 passed in 1.29s.
+  - Command used: `Set-Location P:\vs-code\projects\Personal_API\backend; py -3 -m pytest tests/test_rag.py -q`
+- Next:
+  - Phase 3: optional lightweight reranker and query-rewrite controls with strict grounded output enforcement kept in place.
+
+## Step 50 - RAG Phase 3 (Query Rewrite + Lightweight Reranker)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/rag/query_rewriter.py:
+    - Added deterministic query rewrite module with domain-aware hint expansion (gmail/slack/notion/drive/document cues).
+    - Added configurable cap on rewrite variants to keep CPU/memory usage low.
+  - backend/rag/reranker.py:
+    - Added low-cost heuristic reranker that boosts candidates by query-token coverage, phrase match, and local token-order proximity.
+    - Reranker is optional and applied only to top-N candidates for bounded cost.
+  - backend/rag/engine.py:
+    - Integrated query rewrite retrieval flow (`_retrieve_with_rewrites`) that merges variant results and preserves strongest evidence per chunk identity.
+    - Integrated optional lightweight reranker before grounding/answer generation while preserving strict abstain gating.
+  - backend/api/core/config.py:
+    - Added Phase 3 settings:
+      - `RAG_QUERY_REWRITE_ENABLED`
+      - `RAG_QUERY_REWRITE_MAX_VARIANTS`
+      - `RAG_RERANKER_ENABLED`
+      - `RAG_RERANKER_TOP_N`
+      - `RAG_RERANKER_WEIGHT`
+  - backend/.env.example and backend/.env:
+    - Added all Phase 3 env vars for config parity.
+  - backend/api/main.py:
+    - Extended `GET /health/rag` to expose rewrite and reranker runtime configuration.
+  - backend/tests/test_rag.py:
+    - Added tests for domain hint expansion in query rewriting.
+    - Added test proving engine can recover results via rewritten query variants.
+    - Added test validating reranker can reorder results by query alignment.
+- Verification:
+  - Focused RAG test suite passed: 33 passed in 1.41s.
+  - Command used: `Set-Location P:\vs-code\projects\Personal_API\backend; py -3 -m pytest tests/test_rag.py -q`
+- Next:
+  - Re-index existing items with new chunk settings to maximize recall gains from Phase 2 + Phase 3.
+
 ## Step 47 - API Worker Hotfix: Mixed Datetime Sort Crash
 - Status: Completed
 - Date: 2026-03-14
@@ -774,7 +898,101 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Targeted tests passed: `py -3 -m pytest tests/test_celery_foundation.py tests/test_normalizers.py -q` -> 56 passed in 1.05s.
 - Next:
   - Restart connector and embedding workers so the new handoff path is active.
-  - Watch Celery queue depth for `connector.github` vs `pipeline.embedding` to confirm indexing is now offloaded from connector workers.
+
+## Step 54 - RAG UX + Relevance: Session Context, Feedback Endpoint, GitHub/Recency Boosts
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/api/schemas/chat.py:
+    - Extended `ChatMessageResponse` with `assistant_message_id` and `answer_mode`
+    - Added `ChatFeedbackRequest` and `ChatFeedbackResponse`
+  - backend/api/routers/chat.py:
+    - Added session-aware context fetch `_recent_conversation_context()` (last 3 turns / 6 messages) and passed it into `RAGEngine.query(...)`
+    - Added `POST /v1/chat/feedback` endpoint
+    - Feedback is persisted without schema migration by storing a `ChatMessage` row with role `feedback` and structured feedback payload in `sources`
+    - Added `_parse_uuid_or_400()` helper for request validation
+  - backend/rag/engine.py:
+    - Added optional `conversation_history` parameter to `RAGEngine.query(...)`
+    - Added `_compose_retrieval_query(...)` to blend current query with compact session context for better follow-up retrieval
+  - backend/rag/retriever.py:
+    - Added `GITHUB_HINT_TOKENS` and `prefers_github` intent routing
+    - Added source-token boost for exact source mentions (`gmail/slack/github/notion/drive/spotify`)
+    - Added recency-aware scoring lift when user asks for recent/latest results
+    - Extended source constraint + intent matching to include GitHub-only routing path
+  - backend/tests/test_rag.py:
+    - Added `test_compose_retrieval_query_blends_recent_session_turns`
+    - Added `test_hybrid_retriever_prefers_github_when_query_mentions_repositories`
+- Verification:
+  - `pytest tests/test_rag.py -k "compose_retrieval_query_blends_recent_session_turns or prefers_github_when_query_mentions_repositories"` → 2 passed
+
+## Step 53 - RAG Phase 4: Markdown Responses, Temporal Filter, Semantic Dedup, Score Spread Check
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/rag/context.py:
+    - Added `_SOURCE_EMOJI`, `_SOURCE_LABEL`, `_TYPE_LABEL` constants for per-source/type formatting
+    - Rewrote `compose_answer()`: rich Markdown with `### emoji Section` header, numbered **bold** items, *italic* dates, `` `[n]` `` citations, `> blockquote` evidence snippets, `---` separator, footer with count + sources
+    - Rewrote `compose_abstain_answer()`: blockquote warning with Markdown bullet refinement hints
+    - Added `_compose_message_digest_md()` for Slack/message queries in Markdown
+    - Added per-type formatters: `_format_track_item`, `_format_repo_item`, `_format_email_item`, `_format_doc_item`, `_format_event_item`, `_format_generic_item`
+  - backend/rag/engine.py:
+    - Added `from datetime import datetime, timedelta, timezone`
+    - Added `_parse_temporal_filter(query)`: parses "last N days/weeks/months", "yesterday", "today", "this/last week/month", "recently", "in March/January 2025" → UTC cutoff datetime
+    - Added semantic dedup after reranker: keeps best chunk per item ID for answer diversity
+    - Added score spread check in `_is_grounded_enough`: abstains when top cluster is uniformly mediocre (`top_score < min*1.3 AND spread < 0.04`)
+    - Wired `date_after` from temporal parser into `_retrieve_with_rewrites()` → `retriever.retrieve()`
+    - Updated out-of-scope message to Markdown blockquote + bold format
+  - backend/rag/retriever.py:
+    - Added `date_after: datetime | None = None` param to `retrieve()`, `_retrieve_chunk_candidates()`, `_retrieve_lexical_chunk_candidates()`
+    - Applied `WHERE item_date >= date_after` SQL clause in all three retrieval paths
+- Verification:
+  - Email query → `### 📬 Emails` header, bold subjects, *Mar 13* dates, `[1]...[4]` citations, `> snippet` blockquotes ✅
+  - Out-of-scope → `> ℹ️ I can only answer questions grounded in your **personal data**` ✅
+  - Temporal filter wired through to SQL date filter ✅
+  - Dedup: no repeated items in results ✅
+- Next:
+  - Consider hosted LLM (OpenAI/Groq/Gemini) for synthesized narrative answers instead of extractive
+  - Multi-turn session context (carry last 3 turns into query rewriter)
+  - User feedback endpoint `POST /v1/chat/feedback {session_id, thumbs_up}`
+
+## Step 52 - RAG Abstain Fix: Domain Guard + Raised Grounding Thresholds
+- Status: Completed
+- Date: 2026-03-15
+- Problem:
+  - Out-of-scope general-knowledge queries (e.g. "capital of France") were not abstaining — cosine similarity still returned high-scoring unrelated chunks, passing the low grounding thresholds.
+- Changes:
+  - backend/rag/engine.py:
+    - Added `_GENERAL_KNOWLEDGE_RE` compiled regex pattern covering: capital/population/currency of, who is/was/invented, when was born/died, how does X work, define/explain, weather in, exchange rate, unit conversions, etc.
+    - Added `_is_general_knowledge_query(query)` function using the regex above.
+    - Early-exit in `RAGEngine.query()` — if general knowledge detected, returns `out_of_scope` answer immediately without doing any retrieval.
+    - Added `import re` to top of file.
+  - backend/api/core/config.py:
+    - Raised `rag_grounding_min_top_score` default: 0.28 → 0.55
+    - Raised `rag_grounding_min_avg_score` default: 0.16 → 0.42
+  - backend/.env + backend/.env.example:
+    - Synced new threshold values: 0.55 / 0.42
+- Verification:
+  - "What is the capital of France?" → `out_of_scope` answer, no sources returned ✅
+  - "What music have I been listening to on Spotify?" → 4 Spotify tracks returned correctly ✅
+  - No regression on legitimate personal data queries ✅
+- Next:
+  - Consider extending `_GENERAL_KNOWLEDGE_RE` with more domain patterns if new false-pass cases appear.
+
+## Step 51 - Full Re-index After RAG Upgrades (Phase 2/3)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - Re-indexed all item chunks in Azure PostgreSQL using Phase 2/3 RAG settings (smaller chunks, sentence-aware boundaries, new fastembed embeddings).
+  - Script run inside Docker api container to use the same environment and DB connection.
+- Verification:
+  - Smoke run: 100 items → 102 chunks written (OK)
+  - Full run: 1275 items → 1379 chunks written (all items indexed)
+  - Commands used:
+    - `docker compose exec -e PYTHONPATH=/app api python scripts/backfill_item_chunks.py --mode reindex --batch-size 50 --limit 100`
+    - `docker compose exec -e PYTHONPATH=/app api python scripts/backfill_item_chunks.py --mode reindex --batch-size 100`
+- Next:
+  - RAG retrieval is now using fresh Phase 2/3 embeddings and chunk boundaries for all existing items.
+  - Monitor `/health/rag` and live chat quality.
 
 ## Step 50 - DB Startup Timeout Resilience (Retry + Optional Non-Blocking Dev Boot)
 - Status: Completed
@@ -917,6 +1135,27 @@ Track backend implementation progress step-by-step, with what changed, status, a
     - Result: 31 passed, 35 deselected in 13.00s.
 - Next:
   - Optional: expose `chat_top_k` and retriever candidate budget as env settings for production tuning without code changes.
+
+## Step 56 - RAG Guardrails: LLM Citation Validation + User-Only Retrieval Context
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/rag/engine.py:
+    - Added strict citation validation for LLM-generated answers before accepting `answer_mode=llm`.
+    - Added `_extract_citation_indices()` and `_has_valid_citations()` helpers.
+    - If citations are missing or out of range for available sources, engine now falls back to deterministic grounded answer (`answer_mode=fallback`).
+    - Updated `_compose_retrieval_query()` to use user turns only from conversation history to reduce retrieval drift from assistant-generated phrasing.
+  - backend/tests/test_rag.py:
+    - Updated retrieval context test to assert assistant turn text is excluded from retrieval context composition.
+    - Added regression test for citation guard fallback when LLM answer has no valid citations.
+    - Updated LLM-path test fixtures for citation-bearing answer validation and current engine signature (`date_after`, `conversation_history`).
+- Verification:
+  - Focused tests passed:
+    - `py -3 -m pytest tests/test_rag.py -q -k "compose_retrieval_query_blends_recent_session_turns or rag_engine_uses_llm_generator_when_enabled or rag_engine_falls_back_when_llm_answer_has_no_valid_citations"`
+    - Result: `3 passed, 33 deselected`.
+- Next:
+  - Optional: add stricter citation policy requiring at least one citation per factual paragraph for LLM answers.
+  - Optional: add a lightweight retrieval-context summarizer for long sessions (instead of raw user-turn concatenation).
 
 ## Integration Contract Notes for Person 2
 

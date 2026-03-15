@@ -20,10 +20,27 @@ class ChatSource(BaseModel):
 
 class ChatMessageResponse(BaseModel):
 	session_id: str
+	assistant_message_id: str | None = None
 	answer: str
+	answer_mode: str | None = None
 	sources: list[ChatSource] = Field(default_factory=list)
 	documents: list[str] = Field(default_factory=list)
 	file_links: list[str] = Field(default_factory=list)
+
+
+class ChatFeedbackRequest(BaseModel):
+	session_id: str
+	assistant_message_id: str
+	thumbs_up: bool
+	note: str | None = Field(default=None, max_length=2000)
+
+
+class ChatFeedbackResponse(BaseModel):
+	feedback_id: str
+	session_id: str
+	assistant_message_id: str
+	thumbs_up: bool
+	stored: bool = True
 
 
 class ChatHistoryMessage(BaseModel):

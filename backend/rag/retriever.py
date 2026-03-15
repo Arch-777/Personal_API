@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 import math
 
-from sqlalchemy import Float, and_, cast, or_, select
+from sqlalchemy import Float, and_, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from api.models.item import Item
@@ -44,6 +44,7 @@ STOPWORDS = {
 EMAIL_HINT_TOKENS = {"mail", "email", "gmail", "inbox"}
 SLACK_HINT_TOKENS = {"slack", "channel", "channels", "dm", "dms"}
 LINKEDIN_HINT_TOKENS = {"linkedin", "linkedin.com"}
+GITHUB_HINT_TOKENS = {"github", "repo", "repos", "repository", "repositories", "pull", "pr", "issue", "issues"}
 DOCUMENT_HINT_TOKENS = {"document", "documents", "doc", "docs", "note", "notes", "page", "pages", "file", "files"}
 
 
@@ -80,6 +81,7 @@ class QueryIntent:
 	prefers_documents: bool = False
 	prefers_notion: bool = False
 	prefers_drive: bool = False
+	prefers_github: bool = False
 	mentions_linkedin: bool = False
 	wants_favorites: bool = False
 	wants_tracks: bool = False
@@ -88,8 +90,30 @@ class QueryIntent:
 
 
 class HybridRetriever:
-	def __init__(self, db: Session):
+	def __init__(
+		self,
+		db: Session,
+		semantic_candidate_limit: int = 120,
+		lexical_candidate_limit: int = 120,
+		rrf_k: int = 20,
+		rrf_semantic_weight: float = 0.65,
+		rrf_lexical_weight: float = 0.35,
+		rrf_boost: float = 2.5,
+	):
 		self.db = db
+		self.semantic_candidate_limit = max(20, int(semantic_candidate_limit))
+		self.lexical_candidate_limit = max(20, int(lexical_candidate_limit))
+		self.rrf_k = max(1, int(rrf_k))
+		self.rrf_semantic_weight = max(0.0, float(rrf_semantic_weight))
+		self.rrf_lexical_weight = max(0.0, float(rrf_lexical_weight))
+		weight_sum = self.rrf_semantic_weight + self.rrf_lexical_weight
+		if weight_sum <= 0:
+			self.rrf_semantic_weight = 0.65
+			self.rrf_lexical_weight = 0.35
+		else:
+			self.rrf_semantic_weight /= weight_sum
+			self.rrf_lexical_weight /= weight_sum
+		self.rrf_boost = max(0.0, float(rrf_boost))
 
 	def retrieve(
 		self,
@@ -100,6 +124,7 @@ class HybridRetriever:
 		query_embedding: list[float] | None = None,
 		candidate_limit: int = 200,
 		include_debug: bool = False,
+		date_after: datetime | None = None,
 	) -> list[RetrievedItem]:
 		normalized_query = " ".join(query.split()).strip().lower()
 		if not normalized_query:
@@ -121,18 +146,37 @@ class HybridRetriever:
 				intent=intent,
 			)
 
-		chunk_candidates = self._retrieve_chunk_candidates(
+		semantic_candidates = self._retrieve_chunk_candidates(
 			user_id=user_id,
 			query_embedding=query_embedding,
 			type_filter=type_filter,
-			candidate_limit=effective_candidate_limit,
+			candidate_limit=min(effective_candidate_limit, self.semantic_candidate_limit),
 			intent=intent,
 			include_debug=include_debug,
+			date_after=date_after,
 		)
+		lexical_candidates = self._retrieve_lexical_chunk_candidates(
+			user_id=user_id,
+			query=normalized_query,
+			type_filter=type_filter,
+			candidate_limit=min(effective_candidate_limit, self.lexical_candidate_limit),
+			intent=intent,
+			include_debug=include_debug,
+			date_after=date_after,
+		)
+
+		chunk_candidates = semantic_candidates + lexical_candidates
 		if chunk_candidates:
 			deduped = _dedupe_and_group(chunk_candidates)
 			if len(deduped) > top_k:
-				deduped = _apply_rank_fusion(deduped, include_debug=include_debug)
+				deduped = _apply_rank_fusion(
+					deduped,
+					include_debug=include_debug,
+					k=self.rrf_k,
+					semantic_weight=self.rrf_semantic_weight,
+					lexical_weight=self.rrf_lexical_weight,
+					boost=self.rrf_boost,
+				)
 			reranked = _rerank_grouped_results(deduped, intent=intent)
 			reranked.sort(key=lambda item: (item.score, _coerce_sort_datetime(item.item_date)), reverse=True)
 			if len(reranked) <= top_k:
@@ -147,6 +191,9 @@ class HybridRetriever:
 		source_constraint = _build_source_constraint(intent)
 		if source_constraint is not None:
 			stmt = stmt.where(source_constraint)
+
+		if date_after is not None:
+			stmt = stmt.where(Item.item_date >= date_after)
 
 		if active_tokens:
 			like_filters = []
@@ -210,7 +257,14 @@ class HybridRetriever:
 		combined = chunk_candidates + scored
 		deduped = _dedupe_and_group(combined)
 		if len(deduped) > top_k:
-			deduped = _apply_rank_fusion(deduped, include_debug=include_debug)
+			deduped = _apply_rank_fusion(
+				deduped,
+				include_debug=include_debug,
+				k=self.rrf_k,
+				semantic_weight=self.rrf_semantic_weight,
+				lexical_weight=self.rrf_lexical_weight,
+				boost=self.rrf_boost,
+			)
 		reranked = _rerank_grouped_results(deduped, intent=intent, include_debug=include_debug)
 		reranked.sort(key=lambda item: (item.score, _coerce_sort_datetime(item.item_date)), reverse=True)
 		if len(reranked) <= top_k:
@@ -226,6 +280,7 @@ class HybridRetriever:
 		candidate_limit: int,
 		intent: QueryIntent,
 		include_debug: bool = False,
+		date_after: datetime | None = None,
 	) -> list[RetrievedItem]:
 		if not query_embedding:
 			return []
@@ -245,6 +300,8 @@ class HybridRetriever:
 			source_constraint = _build_source_constraint(intent)
 			if source_constraint is not None:
 				stmt = stmt.where(source_constraint)
+			if date_after is not None:
+				stmt = stmt.where(Item.item_date >= date_after)
 			stmt = stmt.order_by(distance_expr.asc()).limit(max(20, candidate_limit))
 			rows = self.db.execute(stmt).all()
 		except Exception:
@@ -284,6 +341,87 @@ class HybridRetriever:
 						sender_name=item.sender_name,
 					),
 					debug={"distance": float(distance or 1.0)},
+				)
+			)
+		return results
+
+	def _retrieve_lexical_chunk_candidates(
+		self,
+		user_id: uuid.UUID,
+		query: str,
+		type_filter: str | None,
+		candidate_limit: int,
+		intent: QueryIntent,
+		include_debug: bool = False,
+		date_after: datetime | None = None,
+	) -> list[RetrievedItem]:
+		if not query.strip():
+			return []
+
+		try:
+			ts_query = func.websearch_to_tsquery("english", query)
+			rank_expr = cast(func.ts_rank_cd(ItemChunk.content_tsv, ts_query), Float).label("lexical_rank")
+			stmt = (
+				select(ItemChunk, Item, rank_expr)
+				.join(Item, ItemChunk.item_id == Item.id)
+				.where(
+					ItemChunk.user_id == user_id,
+					ItemChunk.content_tsv.op("@@")(ts_query),
+				)
+			)
+			if type_filter:
+				stmt = stmt.where(Item.type == type_filter)
+			source_constraint = _build_source_constraint(intent)
+			if source_constraint is not None:
+				stmt = stmt.where(source_constraint)
+			if date_after is not None:
+				stmt = stmt.where(Item.item_date >= date_after)
+			stmt = stmt.order_by(rank_expr.desc(), Item.item_date.desc().nullslast()).limit(max(20, candidate_limit))
+			rows = self.db.execute(stmt).all()
+		except Exception:
+			return []
+
+		results: list[RetrievedItem] = []
+		for row in rows:
+			chunk = getattr(row, "ItemChunk", None) or row[0]
+			item = getattr(row, "Item", None) or row[1]
+			if not _matches_intent_source(row_source=item.source, row_type=item.type, intent=intent):
+				continue
+			lexical_rank = getattr(row, "lexical_rank", None)
+			if lexical_rank is None and len(row) > 2:
+				lexical_rank = row[2]
+			score = max(0.0, float(lexical_rank or 0.0))
+			if score <= 0:
+				continue
+
+			debug_payload = {"lexical_score": score, "lexical_rank": score}
+			if include_debug:
+				debug_payload["retrieval_mode"] = "lexical_fts"
+
+			results.append(
+				RetrievedItem(
+					id=str(item.id),
+					type=item.type,
+					source=item.source,
+					source_id=item.source_id,
+					title=item.title,
+					content=item.content,
+					summary=item.summary,
+					metadata=item.metadata_json or {},
+					item_date=item.item_date,
+					file_path=item.file_path,
+					score=score,
+					chunk_id=chunk.chunk_id,
+					chunk_index=chunk.chunk_index,
+					chunk_text=chunk.chunk_text,
+					canonical_key=_canonical_group_key(
+						source=item.source,
+						source_id=item.source_id,
+						title=item.title,
+						metadata=item.metadata_json or {},
+						sender_name=item.sender_name,
+					),
+					debug=debug_payload,
 				)
 			)
 		return results
@@ -451,8 +589,19 @@ def _intent_bonus(row: Item, query_tokens: set[str], combined_text: str, intent:
 		else:
 			bonus -= 0.2
 
+	if intent.prefers_github:
+		if row_source == "github":
+			bonus += 0.5
+		else:
+			bonus -= 0.2
+
 	if intent.wants_favorites and row_source == "spotify":
 		bonus += _favorite_metadata_score(metadata)
+
+	if intent.requests_recent:
+		bonus += _recency_bonus(row.item_date) * 1.6
+
+	bonus += _source_token_boost(row_source=row_source, query_tokens=query_tokens)
 
 	return bonus
 
@@ -541,6 +690,7 @@ def _infer_intent(normalized_query: str, query_tokens: set[str]) -> QueryIntent:
 		prefers_documents=bool(query_tokens & DOCUMENT_HINT_TOKENS),
 		prefers_notion="notion" in query_tokens,
 		prefers_drive=bool(query_tokens & {"drive", "gdrive"}),
+		prefers_github=bool(query_tokens & GITHUB_HINT_TOKENS),
 		mentions_linkedin=bool(query_tokens & LINKEDIN_HINT_TOKENS),
 		wants_favorites=bool(query_tokens & {"favorite", "favourite", "favorites", "favourites", "best", "top"}),
 		wants_tracks=bool(query_tokens & {"song", "songs", "track", "tracks", "music"}),
@@ -555,7 +705,10 @@ def _extract_requested_count(normalized_query: str) -> int | None:
 		return max(1, min(int(match.group(1)), 50))
 
 	standalone = re.search(r"\b(\d{1,2})\b", normalized_query)
-	if standalone and any(word in normalized_query for word in ["mail", "email", "gmail", "song", "track", "document"]):
+	if standalone and any(
+		word in normalized_query
+		for word in ["mail", "email", "gmail", "song", "track", "document", "repo", "repository", "github", "issue", "pr"]
+	):
 		return max(1, min(int(standalone.group(1)), 50))
 	return None
 
@@ -567,6 +720,8 @@ def _build_source_constraint(intent: QueryIntent):
 		return Item.source == "notion"
 	if intent.prefers_drive and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_notion:
 		return Item.source == "drive"
+	if intent.prefers_github and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents and not intent.prefers_slack:
+		return Item.source == "github"
 	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents and not intent.prefers_slack:
 		return or_(Item.source == "gmail", Item.type == "email")
 	if intent.prefers_spotify and not intent.prefers_email and not intent.prefers_documents:
@@ -585,6 +740,8 @@ def _matches_intent_source(*, row_source: str | None, row_type: str | None, inte
 		return source == "notion"
 	if intent.prefers_drive and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_notion:
 		return source == "drive"
+	if intent.prefers_github and not intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents and not intent.prefers_slack:
+		return source == "github"
 	if intent.prefers_email and not intent.prefers_spotify and not intent.prefers_documents and not intent.prefers_slack:
 		return source == "gmail" or type_name == "email"
 	if intent.prefers_spotify and not intent.prefers_email and not intent.prefers_documents:
@@ -620,8 +777,12 @@ def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent, i
 			adjustment += 0.7 if result.source == "notion" else -0.45
 		if intent.prefers_drive:
 			adjustment += 0.45 if result.source == "drive" else -0.2
+		if intent.prefers_github:
+			adjustment += 0.55 if result.source == "github" else -0.2
 		if intent.wants_favorites and result.source == "spotify":
 			adjustment += _favorite_metadata_score(metadata)
+		if intent.requests_recent:
+			adjustment += _recency_bonus(result.item_date) * 1.2
 		if intent.mentions_linkedin:
 			text = " ".join(
 				[
@@ -640,9 +801,41 @@ def _rerank_grouped_results(results: list[RetrievedItem], intent: QueryIntent, i
 	return results
 
 
-def _apply_rank_fusion(results: list[RetrievedItem], include_debug: bool = False, k: int = 20) -> list[RetrievedItem]:
+def _source_token_boost(row_source: str, query_tokens: set[str]) -> float:
+	if not query_tokens:
+		return 0.0
+	mapping = {
+		"gmail": EMAIL_HINT_TOKENS,
+		"slack": SLACK_HINT_TOKENS,
+		"github": GITHUB_HINT_TOKENS,
+		"notion": {"notion"},
+		"drive": {"drive", "gdrive", "google", "docs"},
+		"spotify": {"spotify", "song", "songs", "track", "tracks", "music"},
+	}
+	hints = mapping.get(row_source, set())
+	if hints and query_tokens & hints:
+		return 0.28
+	return 0.0
+
+
+def _apply_rank_fusion(
+	results: list[RetrievedItem],
+	include_debug: bool = False,
+	k: int = 20,
+	semantic_weight: float = 0.65,
+	lexical_weight: float = 0.35,
+	boost: float = 2.5,
+) -> list[RetrievedItem]:
 	if len(results) <= 1:
 		return results
+
+	weight_sum = semantic_weight + lexical_weight
+	if weight_sum <= 0:
+		semantic_weight = 0.65
+		lexical_weight = 0.35
+		weight_sum = 1.0
+	semantic_weight = semantic_weight / weight_sum
+	lexical_weight = lexical_weight / weight_sum
 
 	semantic_rank = sorted(
 		results,
@@ -655,22 +848,29 @@ def _apply_rank_fusion(results: list[RetrievedItem], include_debug: bool = False
 		reverse=True,
 	)
 
-	semantic_pos = {item.id: index + 1 for index, item in enumerate(semantic_rank)}
-	lexical_pos = {item.id: index + 1 for index, item in enumerate(lexical_rank)}
+	semantic_pos = {_rank_identity(item): index + 1 for index, item in enumerate(semantic_rank)}
+	lexical_pos = {_rank_identity(item): index + 1 for index, item in enumerate(lexical_rank)}
 
 	for item in results:
-		s_rank = semantic_pos[item.id]
-		l_rank = lexical_pos[item.id]
+		identity = _rank_identity(item)
+		s_rank = semantic_pos[identity]
+		l_rank = lexical_pos[identity]
 		rrf_semantic = 1.0 / float(k + s_rank)
 		rrf_lexical = 1.0 / float(k + l_rank)
-		fused_boost = (0.7 * rrf_semantic) + (0.3 * rrf_lexical)
-		item.score += (fused_boost * 3.0)
+		fused_boost = (semantic_weight * rrf_semantic) + (lexical_weight * rrf_lexical)
+		item.score += (fused_boost * boost)
 		if include_debug:
 			item.debug["rrf_semantic_rank"] = s_rank
 			item.debug["rrf_lexical_rank"] = l_rank
-			item.debug["rrf_boost"] = round(fused_boost * 3.0, 6)
+			item.debug["rrf_boost"] = round(fused_boost * boost, 6)
+			item.debug["rrf_semantic_weight"] = round(semantic_weight, 6)
+			item.debug["rrf_lexical_weight"] = round(lexical_weight, 6)
 
 	return results
+
+
+def _rank_identity(item: RetrievedItem) -> str:
+	return f"{item.id}:{item.chunk_id or ''}:{item.chunk_index if item.chunk_index is not None else ''}"
 
 
 def _mmr_select(results: list[RetrievedItem], top_k: int, lambda_relevance: float = 0.75) -> list[RetrievedItem]:

@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Protocol
 
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from api.core.config import get_settings
 from api.models.item import Item
 from api.models.item_chunk import ItemChunk
 from rag.chunker import chunk_item_content
-from rag.embedder import DeterministicEmbedder
+from rag.embedder import SemanticEmbedder
+
+
+class _Embedder(Protocol):
+	def embed_texts(self, texts: list[str]) -> list[list[float]]:
+		...
 
 
 @dataclass(slots=True)
@@ -18,14 +25,22 @@ class IndexingResult:
 	item_embedding: list[float] | None
 
 
-def index_item_chunks(db: Session, item: Item, embedder: DeterministicEmbedder | None = None) -> IndexingResult:
-	embedder = embedder or DeterministicEmbedder()
+def index_item_chunks(db: Session, item: Item, embedder: _Embedder | None = None) -> IndexingResult:
+	settings = get_settings()
+	if embedder is None:
+		embedder = SemanticEmbedder(
+			provider=settings.rag_embedding_provider,
+			model_name=settings.rag_embedding_model,
+			dimensions=settings.rag_embedding_dimensions,
+		)
 	content = _build_index_text(item)
 	chunks = chunk_item_content(
 		item_id=str(item.id),
 		content=content,
 		source=item.source,
 		item_type=item.type,
+		max_tokens=max(64, int(settings.rag_chunk_max_tokens)),
+		overlap_tokens=max(0, int(settings.rag_chunk_overlap_tokens)),
 	)
 
 	db.execute(delete(ItemChunk).where(ItemChunk.item_id == item.id))
