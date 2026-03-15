@@ -1157,6 +1157,194 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Optional: add stricter citation policy requiring at least one citation per factual paragraph for LLM answers.
   - Optional: add a lightweight retrieval-context summarizer for long sessions (instead of raw user-turn concatenation).
 
+## Step 57 - Production Hardening Phase 1: LLM Circuit Breaker + Retrieval/Embedding Cache
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/api/core/config.py:
+    - Added cache controls:
+      - `RAG_CACHE_ENABLED`
+      - `RAG_QUERY_EMBEDDING_CACHE_TTL_SECONDS`
+      - `RAG_QUERY_EMBEDDING_CACHE_MAX_SIZE`
+      - `RAG_RETRIEVAL_CACHE_TTL_SECONDS`
+      - `RAG_RETRIEVAL_CACHE_MAX_SIZE`
+    - Added LLM resilience controls:
+      - `RAG_LLM_CIRCUIT_BREAKER_ENABLED`
+      - `RAG_LLM_CIRCUIT_BREAKER_FAILURE_THRESHOLD`
+      - `RAG_LLM_CIRCUIT_BREAKER_COOLDOWN_SECONDS`
+  - backend/rag/engine.py:
+    - Added in-process TTL+LRU caches for query embeddings and retrieval results.
+    - Added cache-aware retrieval helpers to reduce repeated embed/retrieve work for repeated queries.
+    - Added LLM circuit breaker behavior:
+      - Opens after configurable consecutive failures.
+      - Skips LLM generation while open and returns deterministic fallback answer path.
+      - Resets on successful LLM response.
+    - Wired invalid citations/timeouts/exceptions into failure accounting for breaker state.
+  - backend/api/main.py:
+    - Extended `GET /health/rag` with `cache` and `llm_resilience` diagnostics sections.
+  - backend/.env and backend/.env.example:
+    - Added new cache and circuit-breaker environment variables for runtime parity.
+  - backend/tests/test_rag.py:
+    - Added regression test verifying repeat-query cache reuse for embeddings and retrieval calls.
+    - Added regression test verifying circuit breaker opens after failure and suppresses subsequent LLM call during cooldown.
+- Verification:
+  - Focused tests passed:
+    - `py -3 -m pytest tests/test_rag.py -q -k "reuses_query_embedding_and_retrieval_cache_for_repeat_query or opens_circuit_breaker_after_failure_and_skips_next_llm_call or rag_engine_uses_llm_generator_when_enabled or rag_engine_falls_back_when_llm_answer_has_no_valid_citations or compose_retrieval_query_blends_recent_session_turns"`
+    - Result: `5 passed, 33 deselected`.
+- Next:
+  - Phase 2: add retrieval neighbor-chunk expansion with context token budgeting.
+  - Phase 3: add offline RAG evaluation KPIs and CI regression gate thresholds.
+
+## Step 58 - Production Hardening Phase 2: Neighbor Chunk Expansion + Context Token Budget
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/api/core/config.py:
+    - Added context quality controls:
+      - `RAG_NEIGHBOR_CHUNK_ENABLED`
+      - `RAG_NEIGHBOR_CHUNK_WINDOW`
+      - `RAG_CONTEXT_MAX_TOKENS`
+  - backend/rag/retriever.py:
+    - Added `expand_with_neighbor_chunks(...)` to enrich retrieved chunk evidence with adjacent chunk windows per item (`chunk_index -/+ window`).
+    - Added debug metadata for neighbor expansion when debug mode is enabled.
+    - Expansion is defensive and no-ops safely on query/row parsing failures.
+  - backend/rag/engine.py:
+    - Added neighbor expansion hook (`_expand_neighbor_context`) with backward-compatible fallback for custom retriever stubs.
+    - Added context token budgeting (`_apply_context_token_budget`) so assembled context remains bounded while preserving top-ranked evidence.
+    - Wired both features into query path before context build and grounding calculation.
+  - backend/api/main.py:
+    - Extended `GET /health/rag` with `context` diagnostics section (neighbor expansion + token budget settings).
+  - backend/tests/test_rag.py:
+    - Added regression test proving neighbor expansion is invoked when retriever supports it.
+    - Added regression test proving token budget can cap source count for oversized contexts.
+  - backend/.env and backend/.env.example:
+    - Added new phase-2 environment variables for runtime parity.
+- Verification:
+  - Focused tests passed:
+    - `py -3 -m pytest tests/test_rag.py -q -k "applies_neighbor_chunk_expansion_when_retriever_supports_it or context_token_budget_limits_source_count or reuses_query_embedding_and_retrieval_cache_for_repeat_query or opens_circuit_breaker_after_failure_and_skips_next_llm_call"`
+    - Result: `4 passed, 36 deselected`.
+- Next:
+  - Phase 3: offline RAG evaluation KPI harness and CI regression gates (retrieval relevance, grounded answer quality, abstain precision, citation validity).
+  - Phase 4: stronger citation-to-claim verification for generated answers.
+
+## Step 59 - Production Hardening Phase 3: Offline RAG Quality Gates (CI)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/tests/test_rag_quality_gate.py:
+    - Added offline quality-gate test suite designed for CI regression blocking.
+    - Added retrieval relevance gate (`relevance@3`) over a fixed synthetic corpus and query set.
+    - Added abstain/out-of-scope precision gate for non-personal/general-knowledge or unrelated queries.
+    - Added citation-validity gate for LLM mode to ensure answer citations map to available sources.
+    - Implemented helper checks for citation index parsing and source-range validation.
+- Verification:
+  - Test suite passed:
+    - `py -3 -m pytest tests/test_rag_quality_gate.py -q`
+    - Result: `3 passed`.
+- Next:
+  - Phase 4: add citation-to-claim verification (not only citation index validity) to catch semantically incorrect source attributions.
+  - Phase 5: add multi-provider generation failover path behind config.
+
+## Step 60 - Production Hardening Phase 4: Citation-to-Claim Verification
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/api/core/config.py:
+    - Added verification controls:
+      - `RAG_CITATION_CLAIM_VERIFICATION_ENABLED`
+      - `RAG_CITATION_CLAIM_MIN_TOKEN_OVERLAP`
+  - backend/rag/engine.py:
+    - Added `_is_llm_answer_verified(...)` gate combining:
+      - citation index validity
+      - claim-to-source alignment checks (token overlap between cited claim line and source preview)
+    - Added `_claims_align_with_sources(...)` and `_tokenize_for_alignment(...)` helpers.
+    - LLM output is now accepted only when both citation format and claim alignment checks pass (unless claim verification is disabled via config).
+    - Misaligned cited claims now trigger deterministic fallback with `answer_mode=fallback`.
+  - backend/api/main.py:
+    - Extended `GET /health/rag` with `verification` diagnostics section.
+  - backend/tests/test_rag.py:
+    - Updated LLM success fixture text to include source-aligned claim tokens.
+    - Added regression test proving fallback occurs when cited claim content is unrelated to retrieved source text.
+  - backend/.env and backend/.env.example:
+    - Added phase-4 verification env vars for runtime parity.
+- Verification:
+  - Focused tests passed:
+    - `py -3 -m pytest tests/test_rag.py -q -k "rag_engine_uses_llm_generator_when_enabled or rag_engine_falls_back_when_llm_answer_has_no_valid_citations or falls_back_when_claim_text_does_not_align_with_cited_source"`
+    - Result: `3 passed, 38 deselected`.
+- Next:
+  - Phase 5: add generator provider abstraction and failover ordering (primary/secondary) with health-aware routing.
+  - Phase 6: add RAG metrics counters/timers and alert-ready observability payloads.
+
+## Step 61 - Production Hardening Phase 5: LLM Failover (Primary/Secondary)
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/api/core/config.py:
+    - Added failover controls:
+      - `RAG_LLM_FAILOVER_ENABLED`
+      - `RAG_LLM_FAILOVER_PROVIDER`
+      - `RAG_LLM_FAILOVER_BASE_URL`
+      - `RAG_LLM_FAILOVER_MODEL`
+  - backend/rag/engine.py:
+    - Added optional `failover_generator` injection in `RAGEngine` constructor.
+    - Added configurable failover generator bootstrap for Ollama when failover is enabled and configured.
+    - Added `_generate_with_failover(...)` that tries primary generator first and then secondary on primary failure.
+    - Preserved existing verification/fallback semantics after generation.
+  - backend/api/main.py:
+    - Extended `GET /health/rag` with `llm_failover` diagnostics (`enabled`, `provider`, `configured`).
+  - backend/tests/test_rag.py:
+    - Added regression test proving failover generator is used when primary fails.
+  - backend/.env and backend/.env.example:
+    - Added failover env vars for runtime parity.
+- Verification:
+  - Focused tests passed:
+    - `py -3 -m pytest tests/test_rag.py -q -k "uses_failover_generator_when_primary_fails or rag_engine_uses_llm_generator_when_enabled"`
+    - Result: `2 passed` (within focused run including additional selected checks).
+- Next:
+  - Phase 6 observability instrumentation and alert-surface payloads.
+
+## Step 62 - Production Hardening Phase 6: RAG Timing Observability
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/rag/engine.py:
+    - Added stage-level timing measurements (ms) for:
+      - retrieval
+      - neighbor expansion
+      - rerank
+      - context build
+      - generation
+      - total query latency
+    - Added timing payload in structured `logger.info` extra fields for production telemetry pipelines.
+    - Added `timings` object to query response payload for local diagnostics/testing.
+  - backend/tests/test_rag.py:
+    - Added regression test proving timing payload is returned with numeric latency values.
+- Verification:
+  - Focused tests passed:
+    - `py -3 -m pytest tests/test_rag.py -q -k "returns_timing_observability_payload"`
+    - Result: `1 passed` (included in broader focused execution).
+- Next:
+  - Optional: export counters/histograms to metrics backend (Prometheus/OpenTelemetry) for alerting by percentile SLOs.
+  - Optional: include provider and failure-reason dimensions in metrics labels for faster incident triage.
+
+## Step 63 - RAG Broad-Suite Stabilization + Baseline Validation
+- Status: Completed
+- Date: 2026-03-15
+- Changes:
+  - backend/tests/test_rag.py:
+    - Updated stale assertion strings to match current intentional markdown answer text.
+    - Updated one LLM-failure query fixture to avoid general-knowledge guard false path (`out_of_scope`).
+    - Added `execute()` support to `FakeChatDb` test double for session-context query path used by chat endpoint.
+  - backend/tests/test_rag_quality_gate.py:
+    - Updated LLM citation quality-gate fixture text to satisfy citation-to-claim verification path.
+- Verification:
+  - Broad RAG validation suite passed:
+    - `py -3 -m pytest tests/test_rag.py tests/test_rag_quality_gate.py tests/test_rag_benchmark.py -q`
+    - Result: `47 passed`.
+- Next:
+  - Optional: wire `tests/test_rag_quality_gate.py` into CI required checks for merge blocking.
+  - Optional: define and track explicit KPI targets (e.g., relevance@3, abstain precision, citation validity) over time.
+
 ## Integration Contract Notes for Person 2
 
 ### 1. Connector Sync Trigger Contract

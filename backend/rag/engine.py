@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import copy
 import logging
 import re
+import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -21,6 +24,33 @@ from rag.retriever import HybridRetriever
 logger = logging.getLogger(__name__)
 
 
+class _TTLCache:
+	def __init__(self, max_size: int, ttl_seconds: int):
+		self.max_size = max(1, int(max_size))
+		ttl = int(ttl_seconds)
+		self.ttl_seconds = max(1, ttl)
+		self._store: OrderedDict[str, tuple[float, Any]] = OrderedDict()
+
+	def get(self, key: str) -> Any | None:
+		now = time.monotonic()
+		entry = self._store.get(key)
+		if entry is None:
+			return None
+		expires_at, value = entry
+		if expires_at <= now:
+			self._store.pop(key, None)
+			return None
+		self._store.move_to_end(key)
+		return copy.deepcopy(value)
+
+	def set(self, key: str, value: Any) -> None:
+		expires_at = time.monotonic() + float(self.ttl_seconds)
+		self._store[key] = (expires_at, copy.deepcopy(value))
+		self._store.move_to_end(key)
+		while len(self._store) > self.max_size:
+			self._store.popitem(last=False)
+
+
 class RAGEngine:
 	def __init__(
 		self,
@@ -33,6 +63,7 @@ class RAGEngine:
 		query_rewriter: QueryRewriter | None = None,
 		reranker: LightweightReranker | None = None,
 		use_llm: bool | None = None,
+		failover_generator: OllamaGenerator | None = None,
 	):
 		settings = get_settings()
 		self.db = db
@@ -62,9 +93,34 @@ class RAGEngine:
 			top_n=settings.rag_reranker_top_n,
 			weight=settings.rag_reranker_weight,
 		)
+		self.neighbor_chunk_enabled = bool(settings.rag_neighbor_chunk_enabled)
+		self.neighbor_chunk_window = max(0, int(settings.rag_neighbor_chunk_window))
+		self.context_max_tokens = max(128, int(settings.rag_context_max_tokens))
+		self.citation_claim_verification_enabled = bool(settings.rag_citation_claim_verification_enabled)
+		self.citation_claim_min_token_overlap = max(0.0, float(settings.rag_citation_claim_min_token_overlap))
 		self.min_top_score = float(settings.rag_grounding_min_top_score)
 		self.min_avg_score = float(settings.rag_grounding_min_avg_score)
+		self.cache_enabled = bool(settings.rag_cache_enabled)
+		self.query_embedding_cache: _TTLCache | None = None
+		self.retrieval_cache: _TTLCache | None = None
+		if self.cache_enabled:
+			self.query_embedding_cache = _TTLCache(
+				max_size=settings.rag_query_embedding_cache_max_size,
+				ttl_seconds=settings.rag_query_embedding_cache_ttl_seconds,
+			)
+			self.retrieval_cache = _TTLCache(
+				max_size=settings.rag_retrieval_cache_max_size,
+				ttl_seconds=settings.rag_retrieval_cache_ttl_seconds,
+			)
+
+		self.llm_circuit_breaker_enabled = bool(settings.rag_llm_circuit_breaker_enabled)
+		self.llm_circuit_breaker_failure_threshold = max(1, int(settings.rag_llm_circuit_breaker_failure_threshold))
+		self.llm_circuit_breaker_cooldown_seconds = max(5, int(settings.rag_llm_circuit_breaker_cooldown_seconds))
+		self._llm_failures = 0
+		self._llm_circuit_open_until = 0.0
+		self.llm_failover_enabled = bool(settings.rag_llm_failover_enabled)
 		self.generator = generator
+		self.failover_generator = failover_generator
 		if self.use_llm and self.generator is None:
 			if settings.rag_llm_provider.strip().lower() == "ollama":
 				self.generator = OllamaGenerator(
@@ -76,6 +132,23 @@ class RAGEngine:
 					system_prompt=settings.rag_llm_system_prompt,
 				)
 
+		if (
+			self.use_llm
+			and self.llm_failover_enabled
+			and self.failover_generator is None
+			and settings.rag_llm_failover_provider.strip().lower() == "ollama"
+			and settings.rag_llm_failover_base_url.strip()
+			and settings.rag_llm_failover_model.strip()
+		):
+			self.failover_generator = OllamaGenerator(
+				base_url=settings.rag_llm_failover_base_url,
+				model=settings.rag_llm_failover_model,
+				timeout_seconds=settings.rag_llm_timeout_seconds,
+				temperature=settings.rag_llm_temperature,
+				max_tokens=settings.rag_llm_max_tokens,
+				system_prompt=settings.rag_llm_system_prompt,
+			)
+
 	def query(
 		self,
 		query: str,
@@ -84,6 +157,7 @@ class RAGEngine:
 		include_debug: bool = False,
 		conversation_history: list[dict[str, str]] | None = None,
 	) -> dict[str, Any]:
+		query_start = time.perf_counter()
 		normalized_query = " ".join(query.split()).strip()
 		if not normalized_query:
 			return {
@@ -112,6 +186,7 @@ class RAGEngine:
 		retrieval_query = _compose_retrieval_query(normalized_query, conversation_history)
 		date_after = _parse_temporal_filter(normalized_query)
 
+		retrieval_start = time.perf_counter()
 		retrieved = self._retrieve_with_rewrites(
 			query=retrieval_query,
 			top_k=top_k,
@@ -119,7 +194,15 @@ class RAGEngine:
 			include_debug=include_debug,
 			date_after=date_after,
 		)
+		retrieval_elapsed_ms = round((time.perf_counter() - retrieval_start) * 1000.0, 3)
+
+		expand_start = time.perf_counter()
+		retrieved = self._expand_neighbor_context(retrieved, include_debug=include_debug)
+		expand_elapsed_ms = round((time.perf_counter() - expand_start) * 1000.0, 3)
+
+		rerank_start = time.perf_counter()
 		retrieved = self.reranker.rerank(normalized_query, retrieved, include_debug=include_debug)
+		rerank_elapsed_ms = round((time.perf_counter() - rerank_start) * 1000.0, 3)
 
 		# Semantic dedup: keep best-scoring chunk per item ID for answer diversity
 		seen_item_ids: set[str] = set()
@@ -129,11 +212,15 @@ class RAGEngine:
 				seen_item_ids.add(item.id)
 				deduped.append(item)
 		retrieved = deduped
+		retrieved = _apply_context_token_budget(retrieved, max_tokens=self.context_max_tokens)
 
+		context_start = time.perf_counter()
 		built: BuiltContext = self.context_builder.build(normalized_query, retrieved, include_debug=include_debug)
+		context_elapsed_ms = round((time.perf_counter() - context_start) * 1000.0, 3)
 		grounding = _grounding_confidence(retrieved)
 		answer = self.context_builder.compose_answer(normalized_query, retrieved)
 		answer_mode = "deterministic"
+		generation_elapsed_ms = 0.0
 
 		if not _is_grounded_enough(
 			grounding=grounding,
@@ -153,30 +240,54 @@ class RAGEngine:
 			}
 
 		if self.use_llm and self.generator is not None and built.sources:
-			try:
-				llm_answer = self.generator.generate(query=normalized_query, context_text=built.context_text)
-				if _has_valid_citations(llm_answer, source_count=len(built.sources)):
-					answer = llm_answer
-					answer_mode = "llm"
-				else:
-					logger.warning(
-						"LLM answer missing/invalid citations; falling back to deterministic RAG answer",
-						extra={"source_count": len(built.sources)},
+			if self._is_llm_circuit_open():
+				logger.warning("LLM circuit breaker is open; using deterministic fallback answer")
+				answer = self.context_builder.compose_answer(normalized_query, retrieved)
+				answer_mode = "fallback"
+			else:
+				try:
+					generation_start = time.perf_counter()
+					llm_answer, provider_used = self._generate_with_failover(
+						query=normalized_query,
+						context_text=built.context_text,
 					)
+					generation_elapsed_ms = round((time.perf_counter() - generation_start) * 1000.0, 3)
+					if _is_llm_answer_verified(
+						answer=llm_answer,
+						sources=built.sources,
+						claim_verification_enabled=self.citation_claim_verification_enabled,
+						min_claim_overlap=self.citation_claim_min_token_overlap,
+					):
+						answer = llm_answer
+						answer_mode = "llm"
+						if include_debug:
+							for source in built.sources:
+								if isinstance(source, dict):
+									source.setdefault("debug", {})
+									source["debug"]["llm_provider_used"] = provider_used
+						self._on_llm_success()
+					else:
+						logger.warning(
+							"LLM answer missing/invalid citations; falling back to deterministic RAG answer",
+							extra={"source_count": len(built.sources)},
+						)
+						self._on_llm_failure("invalid_citations")
+						answer = self.context_builder.compose_answer(normalized_query, retrieved)
+						answer_mode = "fallback"
+				except httpx.TimeoutException as exc:
+					logger.warning(
+						"LLM generation timed out; falling back to deterministic RAG answer: %s",
+						exc,
+					)
+					self._on_llm_failure("timeout")
 					answer = self.context_builder.compose_answer(normalized_query, retrieved)
 					answer_mode = "fallback"
-			except httpx.TimeoutException as exc:
-				logger.warning(
-					"LLM generation timed out; falling back to deterministic RAG answer: %s",
-					exc,
-				)
-				answer = self.context_builder.compose_answer(normalized_query, retrieved)
-				answer_mode = "fallback"
-			except Exception:
-				logger.exception("LLM generation failed; falling back to deterministic RAG answer")
-				# Fall back to deterministic answer path when local LLM is unavailable.
-				answer = self.context_builder.compose_answer(normalized_query, retrieved)
-				answer_mode = "fallback"
+				except Exception:
+					logger.exception("LLM generation failed; falling back to deterministic RAG answer")
+					self._on_llm_failure("exception")
+					# Fall back to deterministic answer path when local LLM is unavailable.
+					answer = self.context_builder.compose_answer(normalized_query, retrieved)
+					answer_mode = "fallback"
 
 		logger.info(
 			"RAG answer generated",
@@ -185,6 +296,14 @@ class RAGEngine:
 				"use_llm": self.use_llm,
 				"source_count": len(built.sources),
 				"document_count": len(built.documents),
+				"timings_ms": {
+					"retrieval": retrieval_elapsed_ms,
+					"neighbor_expand": expand_elapsed_ms,
+					"rerank": rerank_elapsed_ms,
+					"context_build": context_elapsed_ms,
+					"generation": generation_elapsed_ms,
+					"total": round((time.perf_counter() - query_start) * 1000.0, 3),
+				},
 			},
 		)
 
@@ -196,6 +315,14 @@ class RAGEngine:
 			"file_links": built.file_links,
 			"context": built.context_text,
 			"grounding": grounding,
+			"timings": {
+				"retrieval_ms": retrieval_elapsed_ms,
+				"neighbor_expand_ms": expand_elapsed_ms,
+				"rerank_ms": rerank_elapsed_ms,
+				"context_build_ms": context_elapsed_ms,
+				"generation_ms": generation_elapsed_ms,
+				"total_ms": round((time.perf_counter() - query_start) * 1000.0, 3),
+			},
 		}
 
 	def _retrieve_with_rewrites(
@@ -212,9 +339,8 @@ class RAGEngine:
 
 		merged_by_key: dict[str, Any] = {}
 		for variant in variants:
-			query_embedding = self.embedder.embed_text(variant)
-			results = self.retriever.retrieve(
-				user_id=self.user_id,
+			query_embedding = self._embed_query_cached(variant)
+			results = self._retrieve_variant_cached(
 				query=variant,
 				top_k=max(top_k * 2, 10),
 				type_filter=type_filter,
@@ -233,6 +359,120 @@ class RAGEngine:
 		merged = list(merged_by_key.values())
 		merged.sort(key=lambda item: item.score, reverse=True)
 		return merged[: max(top_k * 2, top_k)]
+
+	def _embed_query_cached(self, query: str) -> list[float]:
+		if self.query_embedding_cache is None:
+			return self.embedder.embed_text(query)
+
+		cache_key = f"embedding:{query}"
+		cached = self.query_embedding_cache.get(cache_key)
+		if cached is not None:
+			return cached
+
+		embedding = self.embedder.embed_text(query)
+		self.query_embedding_cache.set(cache_key, embedding)
+		return embedding
+
+	def _retrieve_variant_cached(
+		self,
+		query: str,
+		top_k: int,
+		type_filter: str | None,
+		query_embedding: list[float],
+		include_debug: bool,
+		date_after: datetime | None,
+	):
+		if self.retrieval_cache is None:
+			return self.retriever.retrieve(
+				user_id=self.user_id,
+				query=query,
+				top_k=top_k,
+				type_filter=type_filter,
+				query_embedding=query_embedding,
+				include_debug=include_debug,
+				date_after=date_after,
+			)
+
+		cache_key = (
+			f"retrieval:{self.user_id}:{query}:{top_k}:{type_filter or ''}:"
+			f"{1 if include_debug else 0}:{date_after.isoformat() if date_after else ''}"
+		)
+		cached = self.retrieval_cache.get(cache_key)
+		if cached is not None:
+			return cached
+
+		results = self.retriever.retrieve(
+			user_id=self.user_id,
+			query=query,
+			top_k=top_k,
+			type_filter=type_filter,
+			query_embedding=query_embedding,
+			include_debug=include_debug,
+			date_after=date_after,
+		)
+		self.retrieval_cache.set(cache_key, results)
+		return results
+
+	def _is_llm_circuit_open(self) -> bool:
+		if not self.llm_circuit_breaker_enabled:
+			return False
+		return time.monotonic() < self._llm_circuit_open_until
+
+	def _on_llm_success(self) -> None:
+		self._llm_failures = 0
+		self._llm_circuit_open_until = 0.0
+
+	def _on_llm_failure(self, reason: str) -> None:
+		if not self.llm_circuit_breaker_enabled:
+			return
+		self._llm_failures += 1
+		if self._llm_failures < self.llm_circuit_breaker_failure_threshold:
+			return
+
+		self._llm_circuit_open_until = time.monotonic() + float(self.llm_circuit_breaker_cooldown_seconds)
+		logger.warning(
+			"LLM circuit breaker opened",
+			extra={
+				"failure_reason": reason,
+				"failure_count": self._llm_failures,
+				"cooldown_seconds": self.llm_circuit_breaker_cooldown_seconds,
+			},
+		)
+
+	def _generate_with_failover(self, query: str, context_text: str) -> tuple[str, str]:
+		if self.generator is None:
+			raise RuntimeError("LLM generator is not configured")
+
+		try:
+			return self.generator.generate(query=query, context_text=context_text), "primary"
+		except Exception:
+			if not self.llm_failover_enabled or self.failover_generator is None:
+				raise
+			logger.warning("Primary LLM provider failed, attempting failover provider")
+			return self.failover_generator.generate(query=query, context_text=context_text), "failover"
+
+	def _expand_neighbor_context(self, retrieved: list[Any], include_debug: bool = False):
+		if not self.neighbor_chunk_enabled:
+			return retrieved
+		if self.neighbor_chunk_window <= 0:
+			return retrieved
+
+		expand_method = getattr(self.retriever, "expand_with_neighbor_chunks", None)
+		if not callable(expand_method):
+			return retrieved
+
+		try:
+			return expand_method(retrieved, window=self.neighbor_chunk_window, include_debug=include_debug)
+		except TypeError:
+			# Backward compatibility with custom retriever stubs that may not accept include_debug.
+			try:
+				return expand_method(retrieved, window=self.neighbor_chunk_window)
+			except Exception:
+				logger.exception("Neighbor chunk expansion failed; continuing without expansion")
+				return retrieved
+		except Exception:
+			logger.exception("Neighbor chunk expansion failed; continuing without expansion")
+			return retrieved
 
 
 def _grounding_confidence(retrieved: list[Any]) -> dict[str, float | int]:
@@ -267,6 +507,38 @@ def _is_grounded_enough(grounding: dict[str, float | int], min_top_score: float,
 	if top_score < (min_top_score * 1.3) and abs(top_score - avg_score) < 0.04:
 		return False
 	return True
+
+
+def _estimate_result_tokens(item: Any) -> int:
+	parts = [
+		getattr(item, "title", "") or "",
+		getattr(item, "summary", "") or "",
+		getattr(item, "chunk_text", "") or "",
+		getattr(item, "content", "") or "",
+	]
+	text = " ".join(str(part) for part in parts if part)
+	return max(1, len(text.split()))
+
+
+def _apply_context_token_budget(retrieved: list[Any], max_tokens: int) -> list[Any]:
+	if not retrieved:
+		return retrieved
+	safe_budget = max(64, int(max_tokens))
+
+	selected: list[Any] = []
+	used_tokens = 0
+	for index, item in enumerate(retrieved):
+		token_estimate = _estimate_result_tokens(item)
+		if index == 0:
+			selected.append(item)
+			used_tokens += token_estimate
+			continue
+		if used_tokens + token_estimate > safe_budget:
+			break
+		selected.append(item)
+		used_tokens += token_estimate
+
+	return selected
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +673,20 @@ def _has_valid_citations(answer: str, source_count: int) -> bool:
 	return all(1 <= citation <= source_count for citation in citations)
 
 
+def _is_llm_answer_verified(
+	*,
+	answer: str,
+	sources: list[dict],
+	claim_verification_enabled: bool,
+	min_claim_overlap: float,
+) -> bool:
+	if not _has_valid_citations(answer, source_count=len(sources)):
+		return False
+	if not claim_verification_enabled:
+		return True
+	return _claims_align_with_sources(answer=answer, sources=sources, min_overlap=min_claim_overlap)
+
+
 def _extract_citation_indices(answer: str) -> set[int]:
 	if not answer or not answer.strip():
 		return set()
@@ -412,4 +698,49 @@ def _extract_citation_indices(answer: str) -> set[int]:
 		except ValueError:
 			continue
 	return indices
+
+
+def _claims_align_with_sources(answer: str, sources: list[dict], min_overlap: float) -> bool:
+	if not answer.strip():
+		return False
+
+	by_index: dict[int, str] = {}
+	for index, source in enumerate(sources, start=1):
+		preview = source.get("preview") if isinstance(source, dict) else ""
+		if isinstance(preview, str):
+			by_index[index] = preview.lower()
+
+	for raw_line in answer.splitlines():
+		line = raw_line.strip()
+		if not line:
+			continue
+		citations = _extract_citation_indices(line)
+		if not citations:
+			continue
+
+		claim_tokens = _tokenize_for_alignment(re.sub(r"\[\d+\]", " ", line))
+		if not claim_tokens:
+			continue
+
+		max_overlap = 0.0
+		for citation in citations:
+			source_preview = by_index.get(citation, "")
+			if not source_preview:
+				continue
+			source_tokens = _tokenize_for_alignment(source_preview)
+			if not source_tokens:
+				continue
+			overlap = len(claim_tokens & source_tokens) / max(len(claim_tokens), 1)
+			if overlap > max_overlap:
+				max_overlap = overlap
+
+		if max_overlap < max(0.01, min_overlap):
+			return False
+
+	return True
+
+
+def _tokenize_for_alignment(text: str) -> set[str]:
+	tokens = set(re.findall(r"[a-z0-9]{3,}", (text or "").lower()))
+	return {token for token in tokens if token not in {"with", "from", "this", "that", "there", "their", "about", "your"}}
 

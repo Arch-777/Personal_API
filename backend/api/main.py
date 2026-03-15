@@ -145,6 +145,11 @@ def health_rag():
 	return {
 		"llm_enabled": bool(current_settings.rag_llm_enabled),
 		"llm_provider": current_settings.rag_llm_provider,
+		"llm_failover": {
+			"enabled": bool(current_settings.rag_llm_failover_enabled),
+			"provider": current_settings.rag_llm_failover_provider,
+			"configured": bool(current_settings.rag_llm_failover_base_url.strip() and current_settings.rag_llm_failover_model.strip()),
+		},
 		"embedding_provider": current_settings.rag_embedding_provider,
 		"embedding_model": current_settings.rag_embedding_model,
 		"embedding_dimensions": int(current_settings.rag_embedding_dimensions),
@@ -172,6 +177,27 @@ def health_rag():
 			"enabled": bool(current_settings.rag_reranker_enabled),
 			"top_n": int(current_settings.rag_reranker_top_n),
 			"weight": float(current_settings.rag_reranker_weight),
+		},
+		"context": {
+			"neighbor_chunk_enabled": bool(current_settings.rag_neighbor_chunk_enabled),
+			"neighbor_chunk_window": int(current_settings.rag_neighbor_chunk_window),
+			"max_tokens": int(current_settings.rag_context_max_tokens),
+		},
+		"verification": {
+			"citation_claim_enabled": bool(current_settings.rag_citation_claim_verification_enabled),
+			"citation_claim_min_token_overlap": float(current_settings.rag_citation_claim_min_token_overlap),
+		},
+		"cache": {
+			"enabled": bool(current_settings.rag_cache_enabled),
+			"query_embedding_ttl_seconds": int(current_settings.rag_query_embedding_cache_ttl_seconds),
+			"query_embedding_max_size": int(current_settings.rag_query_embedding_cache_max_size),
+			"retrieval_ttl_seconds": int(current_settings.rag_retrieval_cache_ttl_seconds),
+			"retrieval_max_size": int(current_settings.rag_retrieval_cache_max_size),
+		},
+		"llm_resilience": {
+			"circuit_breaker_enabled": bool(current_settings.rag_llm_circuit_breaker_enabled),
+			"failure_threshold": int(current_settings.rag_llm_circuit_breaker_failure_threshold),
+			"cooldown_seconds": int(current_settings.rag_llm_circuit_breaker_cooldown_seconds),
 		},
 	}
 

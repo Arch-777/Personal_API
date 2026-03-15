@@ -899,8 +899,8 @@ def test_context_builder_compose_answer_builds_message_digest_for_slack_query():
 
 	answer = builder.compose_answer("show my slack messages", retrieved)
 
-	assert "Slack message" in answer
-	assert "Top highlights" in answer
+	assert "Slack Messages" in answer
+	assert "Found **1 message(s)**" in answer
 	assert "#engineering" in answer
 
 
@@ -908,7 +908,7 @@ def test_context_builder_compose_answer_mentions_slack_sync_when_no_data():
 	builder = ContextBuilder()
 	answer = builder.compose_answer("show my slack messages", [])
 
-	assert "could not find Slack messages" in answer
+	assert "No Slack messages found yet" in answer
 	assert "Sync your Slack connector" in answer
 
 
@@ -987,13 +987,13 @@ def test_rag_engine_uses_llm_generator_when_enabled():
 		def generate(self, query: str, context_text: str) -> str:
 			assert "architecture" in query.lower()
 			assert "notion/document" in context_text
-			return "LLM synthesized answer [1]"
+			return "Architecture summary and retrieval components [1]"
 
 	db = FakeRetrieverDb(rows)
 	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=_FakeGenerator(), use_llm=True)
 	result = engine.query("show my architecture notes", top_k=5)
 
-	assert result["answer"] == "LLM synthesized answer [1]"
+	assert result["answer"] == "Architecture summary and retrieval components [1]"
 	assert result["answer_mode"] == "llm"
 	assert len(result["sources"]) == 1
 
@@ -1029,6 +1029,313 @@ def test_rag_engine_falls_back_when_llm_answer_has_no_valid_citations():
 	assert result["answer"]
 
 
+def test_rag_engine_falls_back_when_claim_text_does_not_align_with_cited_source():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Architecture",
+			summary="Architecture summary",
+			content="System has API, workers and retrieval components",
+			metadata_json={"file_path": "/users/u/data/notion/architecture.json"},
+			item_date=now,
+			file_path="/users/u/data/notion/architecture.json",
+			embedding=None,
+			created_at=now,
+		)
+	]
+
+	class _MisalignedCitationGenerator:
+		def generate(self, query: str, context_text: str) -> str:
+			return "The answer is about weather forecast and stock market [1]"
+
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=_MisalignedCitationGenerator(), use_llm=True)
+	result = engine.query("show my architecture notes", top_k=5)
+
+	assert result["answer_mode"] == "fallback"
+
+
+def test_rag_engine_uses_failover_generator_when_primary_fails():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Architecture",
+			summary="Architecture summary",
+			content="System has API, workers and retrieval components",
+			metadata_json={"file_path": "/users/u/data/notion/architecture.json"},
+			item_date=now,
+			file_path="/users/u/data/notion/architecture.json",
+			embedding=None,
+			created_at=now,
+		)
+	]
+
+	class _PrimaryBrokenGenerator:
+		def generate(self, query: str, context_text: str) -> str:
+			raise RuntimeError("primary unavailable")
+
+	class _FailoverGenerator:
+		def generate(self, query: str, context_text: str) -> str:
+			return "Architecture retrieval components [1]"
+
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(
+		db=db,
+		user_id=uuid.uuid4(),
+		generator=_PrimaryBrokenGenerator(),
+		failover_generator=_FailoverGenerator(),
+		use_llm=True,
+	)
+	engine.llm_failover_enabled = True
+
+	result = engine.query("show my architecture notes", top_k=5, include_debug=True)
+
+	assert result["answer_mode"] == "llm"
+	assert "[1]" in result["answer"]
+	assert result["sources"][0]["debug"]["llm_provider_used"] == "failover"
+
+
+def test_rag_engine_returns_timing_observability_payload():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Roadmap",
+			summary="Roadmap summary",
+			content="Q1 objectives and timeline",
+			metadata_json={},
+			item_date=now,
+			file_path=None,
+			embedding=None,
+			created_at=now,
+		)
+	]
+
+	result = RAGEngine(db=FakeRetrieverDb(rows), user_id=uuid.uuid4(), use_llm=False).query("roadmap", top_k=5)
+
+	assert "timings" in result
+	assert isinstance(result["timings"].get("total_ms"), float)
+	assert result["timings"].get("total_ms", 0.0) >= 0.0
+
+
+def test_rag_engine_reuses_query_embedding_and_retrieval_cache_for_repeat_query():
+	class _CountingEmbedder:
+		def __init__(self):
+			self.calls = 0
+
+		def embed_text(self, _text: str):
+			self.calls += 1
+			return [0.1] * 8
+
+	class _CountingRetriever:
+		def __init__(self):
+			self.calls = 0
+
+		def retrieve(
+			self,
+			user_id,
+			query,
+			top_k=8,
+			type_filter=None,
+			query_embedding=None,
+			include_debug=False,
+			date_after=None,
+		):
+			self.calls += 1
+			return [
+				RetrievedItem(
+					id="doc-1",
+					type="document",
+					source="notion",
+					title="Roadmap",
+					summary="Roadmap summary",
+					content="Q2 milestones",
+					score=0.9,
+				)
+			]
+
+	embedder = _CountingEmbedder()
+	retriever = _CountingRetriever()
+	engine = RAGEngine(
+		db=SimpleNamespace(),
+		user_id=uuid.uuid4(),
+		embedder=embedder,
+		retriever=retriever,
+		query_rewriter=QueryRewriter(enabled=False),
+		reranker=LightweightReranker(enabled=False),
+		use_llm=False,
+	)
+
+	first = engine.query("show my roadmap notes", top_k=5)
+	second = engine.query("show my roadmap notes", top_k=5)
+
+	assert first["answer"]
+	assert second["answer"]
+	assert embedder.calls == 1
+	assert retriever.calls == 1
+
+
+def test_rag_engine_opens_circuit_breaker_after_failure_and_skips_next_llm_call():
+	now = datetime.now(UTC)
+	rows = [
+		SimpleNamespace(
+			id=uuid.uuid4(),
+			type="document",
+			source="notion",
+			title="Architecture",
+			summary="Architecture summary",
+			content="System has API, workers and retrieval components",
+			metadata_json={"file_path": "/users/u/data/notion/architecture.json"},
+			item_date=now,
+			file_path="/users/u/data/notion/architecture.json",
+			embedding=None,
+			created_at=now,
+		)
+	]
+
+	class _AlwaysFailGenerator:
+		def __init__(self):
+			self.calls = 0
+
+		def generate(self, query: str, context_text: str) -> str:
+			self.calls += 1
+			raise RuntimeError("provider unavailable")
+
+	gen = _AlwaysFailGenerator()
+	db = FakeRetrieverDb(rows)
+	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=gen, use_llm=True)
+	engine.llm_circuit_breaker_enabled = True
+	engine.llm_circuit_breaker_failure_threshold = 1
+	engine.llm_circuit_breaker_cooldown_seconds = 120
+
+	first = engine.query("show my architecture notes", top_k=5)
+	second = engine.query("show my architecture notes", top_k=5)
+
+	assert first["answer_mode"] == "fallback"
+	assert second["answer_mode"] == "fallback"
+	assert gen.calls == 1
+
+
+def test_rag_engine_applies_neighbor_chunk_expansion_when_retriever_supports_it():
+	class _NeighborAwareRetriever:
+		def __init__(self):
+			self.expansion_calls = 0
+
+		def retrieve(
+			self,
+			user_id,
+			query,
+			top_k=8,
+			type_filter=None,
+			query_embedding=None,
+			include_debug=False,
+			date_after=None,
+		):
+			return [
+				RetrievedItem(
+					id="doc-1",
+					type="document",
+					source="notion",
+					title="Roadmap",
+					summary="Q2 milestones",
+					content="Baseline content",
+					score=0.9,
+					chunk_index=2,
+					chunk_text="core chunk",
+				)
+			]
+
+		def expand_with_neighbor_chunks(self, results, window=1, include_debug=False):
+			self.expansion_calls += 1
+			results[0].chunk_text = f"neighbor evidence window={window}"
+			return results
+
+	class _StubEmbedder:
+		def embed_text(self, _text: str):
+			return [0.0] * 8
+
+	retriever = _NeighborAwareRetriever()
+	engine = RAGEngine(
+		db=SimpleNamespace(),
+		user_id=uuid.uuid4(),
+		embedder=_StubEmbedder(),
+		retriever=retriever,
+		query_rewriter=QueryRewriter(enabled=False),
+		reranker=LightweightReranker(enabled=False),
+		use_llm=False,
+	)
+	engine.neighbor_chunk_enabled = True
+	engine.neighbor_chunk_window = 1
+
+	result = engine.query("show my roadmap notes", top_k=5)
+
+	assert retriever.expansion_calls == 1
+	assert "neighbor evidence" in result["context"]
+
+
+def test_rag_engine_context_token_budget_limits_source_count():
+	class _BudgetRetriever:
+		def retrieve(
+			self,
+			user_id,
+			query,
+			top_k=8,
+			type_filter=None,
+			query_embedding=None,
+			include_debug=False,
+			date_after=None,
+		):
+			return [
+				RetrievedItem(
+					id="doc-1",
+					type="document",
+					source="notion",
+					title="Roadmap",
+					summary="first",
+					content="first content",
+					score=0.95,
+					chunk_text="token " * 120,
+				),
+				RetrievedItem(
+					id="doc-2",
+					type="document",
+					source="drive",
+					title="Plan",
+					summary="second",
+					content="second content",
+					score=0.9,
+					chunk_text="token " * 120,
+				),
+			]
+
+	class _StubEmbedder:
+		def embed_text(self, _text: str):
+			return [0.0] * 8
+
+	engine = RAGEngine(
+		db=SimpleNamespace(),
+		user_id=uuid.uuid4(),
+		embedder=_StubEmbedder(),
+		retriever=_BudgetRetriever(),
+		query_rewriter=QueryRewriter(enabled=False),
+		reranker=LightweightReranker(enabled=False),
+		use_llm=False,
+	)
+	engine.context_max_tokens = 140
+
+	result = engine.query("show my roadmap", top_k=5)
+
+	assert len(result["sources"]) == 1
+
+
 def test_rag_engine_returns_fallback_answer_mode_when_llm_fails():
 	now = datetime.now(UTC)
 	rows = [
@@ -1053,7 +1360,7 @@ def test_rag_engine_returns_fallback_answer_mode_when_llm_fails():
 
 	db = FakeRetrieverDb(rows)
 	engine = RAGEngine(db=db, user_id=uuid.uuid4(), generator=_BrokenGenerator(), use_llm=True)
-	result = engine.query("Explain architecture", top_k=5)
+	result = engine.query("show my architecture notes", top_k=5)
 
 	assert result["answer_mode"] == "fallback"
 	assert isinstance(result["answer"], str)
@@ -1076,7 +1383,7 @@ def test_rag_engine_skips_llm_when_no_retrieved_sources():
 
 	assert gen.called is False
 	assert result["answer_mode"] == "abstain"
-	assert "cannot answer from your data" in result["answer"].lower()
+	assert "no supporting records" in result["answer"].lower()
 
 
 def test_context_builder_compose_answer_returns_citation_based_output():
@@ -1098,7 +1405,7 @@ def test_context_builder_compose_answer_returns_citation_based_output():
 
 	answer = builder.compose_answer("roadmap", retrieved)
 
-	assert "grounded only in your indexed data" in answer.lower()
+	assert "here's what i found in your indexed data" in answer.lower()
 	assert "[1]" in answer
 
 
@@ -1126,7 +1433,7 @@ def test_rag_engine_returns_abstain_when_scores_below_grounding_threshold():
 	result = engine.query("roadmap", top_k=5)
 
 	assert result["answer_mode"] == "abstain"
-	assert "cannot answer" in result["answer"].lower()
+	assert "couldn't find confident evidence" in result["answer"].lower()
 
 
 def test_ollama_prompt_contains_grounding_and_citation_rules():
@@ -1144,6 +1451,7 @@ def test_ollama_prompt_contains_grounding_and_citation_rules():
 class FakeChatDb:
 	def __init__(self):
 		self.added = []
+		self._rows = []
 
 	def add(self, obj):
 		if getattr(obj, "id", None) is None:
@@ -1155,6 +1463,23 @@ class FakeChatDb:
 
 	def refresh(self, _obj):
 		return None
+
+	def execute(self, _stmt):
+		class _Rows:
+			def __init__(self, rows):
+				self._rows = rows
+
+			def all(self):
+				return self._rows
+
+		class _Result:
+			def __init__(self, rows):
+				self._rows = rows
+
+			def scalars(self):
+				return _Rows(self._rows)
+
+		return _Result([])
 
 
 def _override_user():

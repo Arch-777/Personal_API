@@ -475,6 +475,75 @@ class HybridRetriever:
 		deduped.sort(key=lambda item: (_coerce_sort_datetime(item.item_date), item.score), reverse=True)
 		return deduped[:top_k]
 
+	def expand_with_neighbor_chunks(
+		self,
+		results: list[RetrievedItem],
+		window: int = 1,
+		include_debug: bool = False,
+	) -> list[RetrievedItem]:
+		if not results:
+			return results
+		safe_window = max(0, int(window))
+		if safe_window <= 0:
+			return results
+
+		expanded: list[RetrievedItem] = []
+		for item in results:
+			if item.chunk_index is None:
+				expanded.append(item)
+				continue
+			try:
+				item_uuid = uuid.UUID(str(item.id))
+			except Exception:
+				expanded.append(item)
+				continue
+
+			start_index = max(0, int(item.chunk_index) - safe_window)
+			end_index = int(item.chunk_index) + safe_window
+			try:
+				stmt = (
+					select(ItemChunk.chunk_index, ItemChunk.chunk_text)
+					.where(
+						ItemChunk.item_id == item_uuid,
+						ItemChunk.chunk_index >= start_index,
+						ItemChunk.chunk_index <= end_index,
+					)
+					.order_by(ItemChunk.chunk_index.asc())
+					.limit((safe_window * 2) + 1)
+				)
+				rows = self.db.execute(stmt).all()
+			except Exception:
+				expanded.append(item)
+				continue
+
+			chunk_texts: list[str] = []
+			neighbor_indices: list[int] = []
+			for row in rows:
+				chunk_index = getattr(row, "chunk_index", None)
+				chunk_text = getattr(row, "chunk_text", None)
+				if chunk_index is None and isinstance(row, tuple) and len(row) >= 2:
+					chunk_index = row[0]
+					chunk_text = row[1]
+				if not isinstance(chunk_text, str) or not chunk_text.strip():
+					continue
+				chunk_texts.append(chunk_text.strip())
+				if isinstance(chunk_index, int):
+					neighbor_indices.append(chunk_index)
+
+			if chunk_texts:
+				merged = " ".join(chunk_texts)
+				if merged:
+					item.chunk_text = merged
+					if include_debug:
+						item.debug["neighbor_window"] = safe_window
+						item.debug["neighbor_chunk_count"] = len(chunk_texts)
+						if neighbor_indices:
+							item.debug["neighbor_indices"] = neighbor_indices
+
+			expanded.append(item)
+
+		return expanded
+
 
 def _score_item(
 	row: Item,
