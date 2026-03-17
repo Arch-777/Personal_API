@@ -1,7 +1,8 @@
 from collections.abc import Generator
 import time
+import uuid
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -24,6 +25,7 @@ engine = create_engine(
 )
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, class_=Session)
+RLS_USER_INFO_KEY = "app_current_user_id"
 
 
 class Base(DeclarativeBase):
@@ -36,6 +38,27 @@ def get_db() -> Generator[Session, None, None]:
 		yield db
 	finally:
 		db.close()
+
+
+def set_db_current_user(db: Session, user_id: uuid.UUID | str) -> None:
+	"""Bind app.current_user_id for this session; reapplied on every transaction begin."""
+	user_id_value = str(user_id)
+	db.info[RLS_USER_INFO_KEY] = user_id_value
+	db.execute(
+		text("SELECT set_config('app.current_user_id', :user_id, true)"),
+		{"user_id": user_id_value},
+	)
+
+
+@event.listens_for(Session, "after_begin")
+def _apply_rls_user_context(session: Session, _transaction, connection) -> None:
+	user_id_value = session.info.get(RLS_USER_INFO_KEY)
+	if not user_id_value:
+		return
+	connection.execute(
+		text("SELECT set_config('app.current_user_id', :user_id, true)"),
+		{"user_id": user_id_value},
+	)
 
 
 def check_database_connection(retries: int = 0, retry_delay_seconds: float = 1.0) -> None:

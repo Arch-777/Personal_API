@@ -16,7 +16,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from api.core.config import get_settings
-from api.core.db import SessionLocal
+from api.core.db import SessionLocal, set_db_current_user
 from api.core.rate_limit import check_outbound_connector_limit
 from api.core.http_client import get_http_client
 from api.models.connector import Connector
@@ -97,6 +97,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
 
     try:
         with SessionLocal() as db:
+            set_db_current_user(db, parsed_user_id)
             connector = _get_connector(db, parsed_connector_id, parsed_user_id, platform)
             _ensure_google_scopes(connector, platform)
             if platform in {"gmail", "drive", "gcal"}:

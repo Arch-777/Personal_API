@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
-from api.core.db import SessionLocal
+from api.core.db import SessionLocal, set_db_current_user
 from api.models.item import Item
 from api.models.item_chunk import ItemChunk
 from rag.indexer import index_item_chunks
@@ -28,6 +28,7 @@ def embed_item(self, item_id: str, user_id: str, chunk_count: int | None = None)
 
     try:
         with SessionLocal() as db:
+            set_db_current_user(db, parsed_user_id)
             item = db.execute(
                 select(Item).where(Item.id == parsed_item_id, Item.user_id == parsed_user_id)
             ).scalar_one_or_none()

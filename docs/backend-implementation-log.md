@@ -709,6 +709,26 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Start/redeploy workers so new queue subscriptions are active.
   - Optionally split dedicated lane workers (`worker-sync-high`, `worker-sync-normal`, `worker-sync-low`) for stricter isolation at higher scale.
 
+## Step 52 - RLS Runtime Binding (app.current_user_id)
+- Status: Completed
+- Date: 2026-03-17
+- Changes:
+  - backend/api/core/db.py:
+    - Added `set_db_current_user` helper to bind the authenticated tenant id into DB session context.
+    - Added SQLAlchemy `after_begin` session event hook to apply `SET LOCAL app.current_user_id` at transaction start for any session carrying tenant context.
+  - backend/api/core/auth.py:
+    - Bound `app.current_user_id` during auth dependency resolution so authenticated request transactions run under tenant-scoped DB context.
+  - backend/workers/connector_sync.py:
+    - Bound tenant context for worker DB sessions before querying/upserting tenant-scoped tables.
+  - backend/workers/embedding_worker.py:
+    - Bound tenant context before item/chunk reads and writes.
+- Verification:
+  - Editor/type diagnostics report no errors in modified files.
+  - Focused regression run: `tests/test_api.py tests/test_celery_foundation.py` -> 77 passed, 1 known pre-existing failure in GitHub callback state parsing path unrelated to RLS runtime binding.
+- Next:
+  - Apply migration `backend/migrations/003_scalability_foundation.sql` in all environments if not already applied.
+  - Restart API/workers to ensure the runtime context hook is active in all processes.
+
 ## Step 47 - API Worker Hotfix: Mixed Datetime Sort Crash
 - Status: Completed
 - Date: 2026-03-14
