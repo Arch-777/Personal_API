@@ -31,6 +31,11 @@ QUEUE_SPOTIFY = "connector.spotify"
 QUEUE_SLACK = "connector.slack"
 QUEUE_FILE_WATCHER = "pipeline.file-watcher"
 QUEUE_EMBEDDING = "pipeline.embedding"
+QUEUE_EMBEDDING_LOW = "pipeline.embedding.low"
+
+QUEUE_SYNC_HIGH = "sync.high"
+QUEUE_SYNC_NORMAL = "sync.normal"
+QUEUE_SYNC_LOW = "sync.low"
 
 ALL_QUEUES = (
     QUEUE_DEFAULT,
@@ -41,6 +46,10 @@ ALL_QUEUES = (
     QUEUE_SLACK,
     QUEUE_FILE_WATCHER,
     QUEUE_EMBEDDING,
+    QUEUE_EMBEDDING_LOW,
+    QUEUE_SYNC_HIGH,
+    QUEUE_SYNC_NORMAL,
+    QUEUE_SYNC_LOW,
 )
 
 TASK_ROUTES = {

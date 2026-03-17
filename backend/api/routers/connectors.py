@@ -31,7 +31,7 @@ from api.schemas.connector import (
     ConnectorResponse,
     ConnectorSyncResponse,
 )
-from workers.celery_app import celery_app
+from workers.celery_app import QUEUE_SYNC_HIGH, QUEUE_SYNC_NORMAL, celery_app
 from workers.connector_sync import run_connector_sync
 
 
@@ -632,6 +632,7 @@ async def github_webhook(
             celery_app.send_task(
                 PLATFORM_TO_TASK["github"],
                 args=[str(connector.id), str(connector.user_id), connector.sync_cursor],
+                queue=QUEUE_SYNC_HIGH,
             )
             queued_jobs += 1
         except Exception as exc:  # noqa: BLE001
@@ -1274,6 +1275,7 @@ def sync_connector(
         celery_app.send_task(
             task_name,
             args=[str(connector.id), str(current_user.id), connector.sync_cursor],
+            queue=QUEUE_SYNC_NORMAL,
         )
     except Exception as exc:  # noqa: BLE001
         # Development-only fallback: run inline only when explicitly enabled.

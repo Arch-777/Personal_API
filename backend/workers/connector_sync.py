@@ -17,12 +17,12 @@ from sqlalchemy.dialects.postgresql import insert
 
 from api.core.config import get_settings
 from api.core.db import SessionLocal
+from api.core.rate_limit import check_outbound_connector_limit
 from api.core.http_client import get_http_client
 from api.models.connector import Connector
 from api.models.item import Item
 from api.models.user import User  # noqa: F401  # Ensure users table metadata is loaded for FK resolution.
 from normalizer.base import BaseNormalizer, NormalizedItem
-from rag.indexer import index_item_chunks
 
 def _broadcast(user_id: str, event: str, data: dict[str, Any]) -> None:
     """Best-effort broadcast to WebSocket clients. Silently skips if unavailable."""
@@ -82,6 +82,16 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
     except (TypeError, ValueError) as exc:
         raise NonRetryableSyncError("Invalid connector_id or user_id passed to sync task") from exc
 
+    allowed, retry_after_seconds = check_outbound_connector_limit(user_id=user_id, platform=platform)
+    if not allowed:
+        return {
+            "status": "throttled",
+            "platform": platform,
+            "connector_id": connector_id,
+            "user_id": user_id,
+            "retry_after_seconds": retry_after_seconds,
+        }
+
     _mark_sync_started(parsed_connector_id, parsed_user_id)
     _broadcast(user_id, "sync.started", {"platform": platform, "connector_id": connector_id})
 
@@ -119,6 +129,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             "items_upserted": len(upserted_item_ids),
             "embedding_jobs_queued": indexing_stats["queued"],
             "embedding_jobs_inline": indexing_stats["inline"],
+            "embedding_jobs_failed": indexing_stats["failed"],
         })
 
         return {
@@ -131,6 +142,7 @@ def run_connector_sync(platform: str, connector_id: str, user_id: str, cursor: s
             "items_upserted": len(upserted_item_ids),
             "embedding_jobs_queued": indexing_stats["queued"],
             "embedding_jobs_inline": indexing_stats["inline"],
+            "embedding_jobs_failed": indexing_stats["failed"],
             "next_cursor": next_cursor,
             "item_ids": [str(item_id) for item_id in upserted_item_ids],
         }
@@ -1088,22 +1100,23 @@ def _extract_first_record_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _dispatch_indexing_pipeline(db, item_ids: list[uuid.UUID], user_id: uuid.UUID) -> dict[str, int]:
-    """Queue embedding for upserted items and fallback to inline indexing if queueing fails."""
+    """Queue embedding for upserted items; never perform inline embedding during ingestion."""
     if not item_ids:
-        return {"queued": 0, "inline": 0}
+        return {"queued": 0, "inline": 0, "failed": 0}
 
     try:
         # Local import avoids a hard import cycle at module import time.
-        from workers.celery_app import celery_app
+        from workers.celery_app import QUEUE_EMBEDDING, celery_app
     except Exception:  # noqa: BLE001
         celery_app = None
+        QUEUE_EMBEDDING = "pipeline.embedding"
 
     items = db.execute(
         select(Item).where(Item.id.in_(item_ids), Item.user_id == user_id)
     ).scalars().all()
 
     queued_jobs = 0
-    inline_jobs = 0
+    failed_jobs = 0
 
     for item in items:
         metadata = dict(item.metadata_json or {})
@@ -1115,23 +1128,18 @@ def _dispatch_indexing_pipeline(db, item_ids: list[uuid.UUID], user_id: uuid.UUI
                 celery_app.send_task(
                     "workers.embedding_worker.embed_item",
                     args=[str(item.id), str(user_id), None],
+                    queue=QUEUE_EMBEDDING,
                 )
                 queued_jobs += 1
                 continue
             except Exception:
-                logger.exception("Failed to queue embedding task for item %s; falling back to inline indexing", item.id)
+                logger.exception("Failed to queue embedding task for item %s", item.id)
+                failed_jobs += 1
+                continue
 
-        try:
-            result = index_item_chunks(db=db, item=item)
-            metadata["embedding_status"] = "completed"
-            metadata["embedded_at"] = datetime.now(UTC).isoformat()
-            metadata["chunk_count"] = result.chunk_count
-            item.metadata_json = metadata
-            inline_jobs += 1
-        except Exception:
-            logger.exception("Inline indexing failed for item %s", item.id)
+        failed_jobs += 1
 
-    return {"queued": queued_jobs, "inline": inline_jobs}
+    return {"queued": queued_jobs, "inline": 0, "failed": failed_jobs}
 
 
 def _upsert_items(db, rows: list[dict[str, Any]]) -> list[uuid.UUID]:

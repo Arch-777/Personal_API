@@ -9,7 +9,7 @@ from api.core.db import SessionLocal, engine
 from api.models.item import Item
 from api.models.item_chunk import ItemChunk
 from api.models.user import User  # noqa: F401
-from rag.indexer import index_item_chunks
+from workers.celery_app import QUEUE_EMBEDDING_LOW, celery_app
 
 
 EXPECTED_DATABASE_NAME = "personalapi"
@@ -49,8 +49,7 @@ def main() -> int:
 		print(f"Backfill mode: {args.mode}")
 
 	processed = 0
-	indexed_items = 0
-	indexed_chunks = 0
+	queued_items = 0
 	last_item_id = None
 	batch_size = max(1, int(args.batch_size))
 	remaining_limit = args.limit
@@ -71,33 +70,32 @@ def main() -> int:
 			if not items:
 				break
 
-			batch_indexed_items = 0
-			batch_chunks = 0
+			batch_queued = 0
 			for item in items:
-				result = index_item_chunks(db=db, item=item)
 				metadata = dict(item.metadata_json or {})
-				metadata["embedding_status"] = "completed"
-				metadata["chunk_count"] = result.chunk_count
+				metadata["embedding_status"] = "queued"
 				item.metadata_json = metadata
-				batch_indexed_items += 1
-				batch_chunks += result.chunk_count
+				celery_app.send_task(
+					"workers.embedding_worker.embed_item",
+					args=[str(item.id), str(item.user_id), None],
+					queue=QUEUE_EMBEDDING_LOW,
+				)
+				batch_queued += 1
 				last_item_id = item.id
 
 			db.commit()
 
 		processed += len(items)
-		indexed_items += batch_indexed_items
-		indexed_chunks += batch_chunks
+		queued_items += batch_queued
 		if remaining_limit is not None:
 			remaining_limit -= len(items)
 		print(
-			f"Processed {processed} items total | indexed this batch: {batch_indexed_items} | "
-			f"chunks this batch: {batch_chunks}"
+			f"Processed {processed} items total | queued this batch: {batch_queued}"
 		)
 		if remaining_limit is not None and remaining_limit <= 0:
 			break
 
-	print(f"Backfill completed. Indexed items: {indexed_items}; chunk rows written: {indexed_chunks}")
+	print(f"Backfill completed. Embedding jobs queued: {queued_items}")
 	return 0
 
 

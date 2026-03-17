@@ -70,7 +70,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=connector.google",
+        "--queues=connector.google,sync.high,sync.normal,sync.low",
         "--hostname=worker-google@%h",
       ]
     depends_on:
@@ -97,7 +97,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=connector.github",
+        "--queues=connector.github,sync.high,sync.normal,sync.low",
         "--hostname=worker-github@%h",
       ]
     depends_on:
@@ -124,7 +124,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=connector.notion",
+        "--queues=connector.notion,sync.high,sync.normal,sync.low",
         "--hostname=worker-notion@%h",
       ]
     depends_on:
@@ -151,7 +151,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=connector.spotify",
+        "--queues=connector.spotify,sync.high,sync.normal,sync.low",
         "--hostname=worker-spotify@%h",
       ]
     depends_on:
@@ -178,7 +178,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=connector.slack",
+        "--queues=connector.slack,sync.high,sync.normal,sync.low",
         "--hostname=worker-slack@%h",
       ]
     depends_on:
@@ -232,7 +232,7 @@ services:
         "workers.celery_app:celery_app",
         "worker",
         "--loglevel=INFO",
-        "--queues=pipeline.embedding",
+        "--queues=pipeline.embedding,pipeline.embedding.low",
         "--hostname=worker-embedding@%h",
       ]
     depends_on:

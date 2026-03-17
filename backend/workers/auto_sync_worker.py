@@ -9,7 +9,8 @@ from sqlalchemy import or_, select
 from api.core.config import get_settings
 from api.core.db import SessionLocal
 from api.models.connector import Connector
-from workers.celery_app import celery_app
+from api.models.user import User
+from workers.celery_app import QUEUE_SYNC_LOW, QUEUE_SYNC_NORMAL, celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +43,12 @@ def dispatch_auto_sync() -> dict[str, Any]:
         return {"status": "skipped", "reason": "auto_sync_disabled"}
 
     stale_before = datetime.now(UTC) - timedelta(minutes=settings.auto_sync_stale_after_minutes)
+    active_cutoff = datetime.now(UTC) - timedelta(days=7)
 
     with SessionLocal() as db:
         connectors = db.execute(
-            select(Connector)
+            select(Connector, User.updated_at)
+            .join(User, User.id == Connector.user_id)
             .where(
                 Connector.platform.in_(tuple(PLATFORM_TO_TASK.keys())),
                 Connector.status.in_(("connected", "error")),
@@ -53,23 +56,32 @@ def dispatch_auto_sync() -> dict[str, Any]:
             )
             .order_by(Connector.last_synced.asc().nullsfirst(), Connector.created_at.asc())
             .limit(settings.auto_sync_batch_size)
-        ).scalars().all()
+        ).all()
 
-    eligible_connectors = [connector for connector in connectors if _connector_auto_sync_enabled(connector)]
+    eligible_connectors = [row for row in connectors if _connector_auto_sync_enabled(row[0])]
 
     queued = 0
+    queued_normal = 0
+    queued_low = 0
     failed = 0
-    for connector in eligible_connectors:
+    for connector, user_updated_at in eligible_connectors:
         task_name = PLATFORM_TO_TASK.get(connector.platform)
         if task_name is None:
             continue
+
+        queue_name = QUEUE_SYNC_NORMAL if user_updated_at and user_updated_at >= active_cutoff else QUEUE_SYNC_LOW
 
         try:
             celery_app.send_task(
                 task_name,
                 args=[str(connector.id), str(connector.user_id), connector.sync_cursor],
+                queue=queue_name,
             )
             queued += 1
+            if queue_name == QUEUE_SYNC_NORMAL:
+                queued_normal += 1
+            else:
+                queued_low += 1
         except Exception:  # noqa: BLE001
             failed += 1
             logger.exception(
@@ -83,6 +95,8 @@ def dispatch_auto_sync() -> dict[str, Any]:
         "scanned": len(connectors),
         "eligible": len(eligible_connectors),
         "queued": queued,
+        "queued_normal": queued_normal,
+        "queued_low": queued_low,
         "failed": failed,
         "stale_before": stale_before.isoformat(),
     }

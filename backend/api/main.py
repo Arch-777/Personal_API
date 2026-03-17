@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from api.core.db import check_database_connection
 from api.core.config import get_settings
+from api.core.rate_limit import check_inbound_api_key_limit
 from rag.generator import check_ollama_readiness
 
 
@@ -48,6 +49,20 @@ app.add_middleware(
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def inbound_api_key_rate_limit(request: Request, call_next):
+	api_key = request.headers.get("x-api-key", "").strip()
+	if api_key:
+		allowed, retry_after_seconds = check_inbound_api_key_limit(api_key)
+		if not allowed:
+			return JSONResponse(
+				status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+				content={"detail": "API rate limit exceeded for this API key"},
+				headers={"Retry-After": str(retry_after_seconds)},
+			)
+	return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)

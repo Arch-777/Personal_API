@@ -519,6 +519,34 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Redeploy workers and API so new exception flow is active.
   - Reconnect Google Drive/GCal with the matching platform OAuth flow and retry sync.
 
+## Step 48 - Scalability Foundation: RLS, HNSW, Rate Limits, and Pool Tuning
+- Status: Completed
+- Date: 2026-03-17
+- Changes:
+  - backend/migrations/003_scalability_foundation.sql:
+    - Added `idx_items_user_type_created` composite index for user-first query paths.
+    - Added HNSW vector indexes for `items.embedding` and `item_chunks.embedding`.
+    - Enabled row-level security on `items` and `item_chunks` with `app.current_user_id` policies.
+  - backend/api/core/rate_limit.py:
+    - Added shared Redis sorted-set sliding window limiter.
+    - Added inbound limiter keyed by API key hash namespace.
+    - Added outbound limiter keyed by `user_id:platform` namespace.
+  - backend/api/main.py:
+    - Added inbound API middleware rate limit for `x-api-key` requests with `429` and `Retry-After`.
+  - backend/workers/connector_sync.py:
+    - Added outbound per-user-per-platform rate limiting before sync execution.
+    - Returns `status=throttled` with `retry_after_seconds` when over limit.
+  - backend/api/core/config.py, backend/api/core/db.py, backend/.env.example:
+    - Added SQLAlchemy pool settings and wired pool configuration into engine creation.
+    - Added configurable inbound/outbound rate-limit settings.
+- Verification:
+  - Compile check passed for edited modules via `py -3 -m compileall`.
+  - Targeted tests run (`tests/test_api.py tests/test_celery_foundation.py`) showed one existing failure in GitHub callback state handling that is unrelated to these scalability changes.
+- Next:
+  - Apply migration `003_scalability_foundation.sql` in deployed environments.
+  - Set `app.current_user_id` per DB transaction in API/worker query paths before enforcing `FORCE ROW LEVEL SECURITY`.
+  - Add/adjust tests for new `x-api-key` inbound and outbound throttling behavior.
+
 ## Step 47 - RAG Phase 1 (Semantic Embeddings + Grounded Abstain + Extractive Citations)
 - Status: Completed
 - Date: 2026-03-15
@@ -642,6 +670,44 @@ Track backend implementation progress step-by-step, with what changed, status, a
   - Command used: `Set-Location P:\vs-code\projects\Personal_API\backend; py -3 -m pytest tests/test_rag.py -q`
 - Next:
   - Re-index existing items with new chunk settings to maximize recall gains from Phase 2 + Phase 3.
+
+## Step 51 - Sync Priority Lanes + Async/Idempotent Embedding Enforcement
+- Status: Completed
+- Date: 2026-03-17
+- Changes:
+  - backend/workers/celery_app.py:
+    - Added sync priority queues: `sync.high`, `sync.normal`, `sync.low`.
+    - Added low-priority embedding queue: `pipeline.embedding.low`.
+    - Registered new queues in Celery `task_queues`.
+  - backend/api/routers/connectors.py:
+    - Routed webhook-triggered GitHub sync to `sync.high`.
+    - Routed user-triggered connector sync to `sync.normal`.
+  - backend/workers/auto_sync_worker.py:
+    - Added activity-based lane selection for scheduled syncs:
+      - active users (`updated_at >= now-7d`) -> `sync.normal`
+      - inactive users -> `sync.low`
+    - Added queue distribution counters (`queued_normal`, `queued_low`).
+  - backend/workers/connector_sync.py:
+    - Enforced async-only embedding dispatch from ingestion path.
+    - Removed inline embedding fallback and now reports `embedding_jobs_failed` when enqueueing fails.
+    - Kept idempotent embedding behavior in worker flow (re-queue safe overwrite semantics remain).
+  - backend/workers/file_watcher_worker.py:
+    - Explicitly routes embedding jobs to `pipeline.embedding`.
+  - backend/scripts/backfill_item_chunks.py:
+    - Converted from synchronous indexing to async enqueueing on `pipeline.embedding.low`.
+    - Marks items as `embedding_status=queued` instead of completing inline.
+  - backend/docker-compose.yml, backend/docker-compose.coolify.yml:
+    - Connector workers now consume their connector queue plus `sync.high,sync.normal,sync.low`.
+    - Embedding worker now consumes `pipeline.embedding,pipeline.embedding.low`.
+  - backend/tests/test_celery_foundation.py:
+    - Updated queue constant/import assertions for new sync and embedding-low lanes.
+- Verification:
+  - `py -3 -m pytest tests/test_celery_foundation.py -q` -> 39 passed.
+  - `py -3 -m pytest tests/test_api.py -k "github_webhook_ping_returns_ok or sync_connector" -q` -> 1 passed.
+  - `py -3 -m compileall workers api/routers/connectors.py scripts/backfill_item_chunks.py` -> completed without syntax errors.
+- Next:
+  - Start/redeploy workers so new queue subscriptions are active.
+  - Optionally split dedicated lane workers (`worker-sync-high`, `worker-sync-normal`, `worker-sync-low`) for stricter isolation at higher scale.
 
 ## Step 47 - API Worker Hotfix: Mixed Datetime Sort Crash
 - Status: Completed

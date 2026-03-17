@@ -24,12 +24,16 @@ def _import_celery_app():
             ALL_QUEUES,
             QUEUE_DEFAULT,
             QUEUE_EMBEDDING,
+            QUEUE_EMBEDDING_LOW,
             QUEUE_FILE_WATCHER,
             QUEUE_GITHUB,
             QUEUE_GOOGLE,
             QUEUE_NOTION,
             QUEUE_SLACK,
             QUEUE_SPOTIFY,
+            QUEUE_SYNC_HIGH,
+            QUEUE_SYNC_LOW,
+            QUEUE_SYNC_NORMAL,
             TASK_ROUTES,
             ResilientTask,
             celery_app,
@@ -48,6 +52,10 @@ def _import_celery_app():
         QUEUE_SPOTIFY,
         QUEUE_FILE_WATCHER,
         QUEUE_EMBEDDING,
+        QUEUE_EMBEDDING_LOW,
+        QUEUE_SYNC_HIGH,
+        QUEUE_SYNC_NORMAL,
+        QUEUE_SYNC_LOW,
         TASK_ROUTES,
     )
 
@@ -59,14 +67,16 @@ def _import_celery_app():
 class TestQueueConstants:
     def test_queue_names_are_strings(self):
         (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
-         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING,
+         QUEUE_EMBEDDING_LOW, QUEUE_SYNC_HIGH, QUEUE_SYNC_NORMAL, QUEUE_SYNC_LOW, _) = _import_celery_app()
 
         for name in ALL_QUEUES:
             assert isinstance(name, str) and name, f"Expected non-empty string, got {name!r}"
 
     def test_all_queues_contains_all_expected_names(self):
         (_, _, _, ALL_QUEUES, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
-         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING,
+         QUEUE_EMBEDDING_LOW, QUEUE_SYNC_HIGH, QUEUE_SYNC_NORMAL, QUEUE_SYNC_LOW, _) = _import_celery_app()
 
         expected = {
             QUEUE_DEFAULT,
@@ -77,6 +87,10 @@ class TestQueueConstants:
             QUEUE_SPOTIFY,
             QUEUE_FILE_WATCHER,
             QUEUE_EMBEDDING,
+            QUEUE_EMBEDDING_LOW,
+            QUEUE_SYNC_HIGH,
+            QUEUE_SYNC_NORMAL,
+            QUEUE_SYNC_LOW,
         }
         assert set(ALL_QUEUES) == expected
 
@@ -86,7 +100,8 @@ class TestQueueConstants:
 
     def test_specific_queue_name_values(self):
         (_, _, _, _, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
-         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, _) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING,
+         QUEUE_EMBEDDING_LOW, QUEUE_SYNC_HIGH, QUEUE_SYNC_NORMAL, QUEUE_SYNC_LOW, _) = _import_celery_app()
 
         assert QUEUE_DEFAULT == "default"
         assert QUEUE_GITHUB == "connector.github"
@@ -96,6 +111,10 @@ class TestQueueConstants:
         assert QUEUE_SPOTIFY == "connector.spotify"
         assert QUEUE_FILE_WATCHER == "pipeline.file-watcher"
         assert QUEUE_EMBEDDING == "pipeline.embedding"
+        assert QUEUE_EMBEDDING_LOW == "pipeline.embedding.low"
+        assert QUEUE_SYNC_HIGH == "sync.high"
+        assert QUEUE_SYNC_NORMAL == "sync.normal"
+        assert QUEUE_SYNC_LOW == "sync.low"
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +139,8 @@ class TestTaskRoutes:
 
     def test_routes_map_to_correct_queues(self):
         (_, _, _, _, QUEUE_DEFAULT, QUEUE_GITHUB, QUEUE_GOOGLE,
-         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING, TASK_ROUTES) = _import_celery_app()
+         QUEUE_NOTION, QUEUE_SLACK, QUEUE_SPOTIFY, QUEUE_FILE_WATCHER, QUEUE_EMBEDDING,
+         QUEUE_EMBEDDING_LOW, QUEUE_SYNC_HIGH, QUEUE_SYNC_NORMAL, QUEUE_SYNC_LOW, TASK_ROUTES) = _import_celery_app()
 
         assert TASK_ROUTES["workers.github_worker.*"]["queue"] == QUEUE_GITHUB
         assert TASK_ROUTES["workers.google_worker.*"]["queue"] == QUEUE_GOOGLE
