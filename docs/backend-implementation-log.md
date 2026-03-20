@@ -13,6 +13,18 @@ Track backend implementation progress step-by-step, with what changed, status, a
 
 ---
 
+## License Migration - MIT to Apache 2.0
+- Status: Completed
+- Date: 2026-03-20
+- Changes:
+  - LICENSE: Created Apache 2.0 license file with full terms, conditions, patent grants, and warranty disclaimers.
+  - README.md: Updated license badge from MIT to Apache 2.0.
+- Rationale: Apache 2.0 provides better patent protections and is more suitable for API-driven projects with multiple integrations.
+- Verification: License file created and badge updated in README.
+- Next: Monitor any license compliance requirements in dependencies.
+
+---
+
 ## Step 1 - Foundation Setup (Person 1 / Week 1)
 - Status: Completed
 - Date: 2026-03-13

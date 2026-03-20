@@ -15,7 +15,7 @@ Connect Gmail, Drive, Calendar, GitHub, Notion, Spotify, and Slack into a single
 [![Celery](https://img.shields.io/badge/Celery-async-37814A?style=flat-square&logo=celery&logoColor=white)](https://docs.celeryq.dev)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE)
 
 [Live Demo](https://personalapi.tech) · [API Docs](https://api.personalapi.tech/docs) · [MCP Health](https://api.personalapi.tech/mcp/health) · [Report Bug](https://github.com/const-nishant/personalapi/issues)
 
